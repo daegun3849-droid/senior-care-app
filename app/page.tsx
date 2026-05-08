@@ -31,6 +31,15 @@ interface HealthLog {
   done_date: string;
 }
 
+interface FamilyContact {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+}
+
+const CONTACTS_KEY = "senior-family-contacts-v1";
+
 const HEALTH_EMOJIS = new Set(["💊", "🩸", "🩺", "🍚", "🚶", "💧", "🏥", "🩻", "🫀", "💉"]);
 
 const DEFAULT_HEALTH_CHECKS = [
@@ -70,6 +79,17 @@ const formatScheduleTime = (isoStr: string) => {
   return `${month}월 ${day}일 ${ampm} ${h12}시${minute !== "00" ? ` ${minute}분` : ""}`;
 };
 
+const toInputDate = (isoStr: string) => {
+  if (!isoStr) return "";
+  return new Date(isoStr).toISOString().slice(0, 10);
+};
+
+const toInputTime = (isoStr: string) => {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
 const addOneHour = (dateStr: string, timeStr: string): string => {
   const dt = new Date(`${dateStr}T${timeStr}:00`);
   dt.setHours(dt.getHours() + 1);
@@ -96,16 +116,36 @@ const SeniorCarePage = () => {
   const [showResetBanner, setShowResetBanner] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showFamilyShare, setShowFamilyShare] = useState(false);
-  const [shareCopied, setShareCopied] = useState(false);
+  const [contacts, setContacts] = useState<FamilyContact[]>([]);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactEmail, setNewContactEmail] = useState("");
 
+  // 일정 추가 상태
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState("");
   const [newTime, setNewTime] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
+  // 일정 수정 상태
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [isEditSaving, setIsEditSaving] = useState(false);
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const { date: todayDate, year: todayYear } = getDateParts();
+
+  // 로컬 스토리지에서 연락처 로드
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CONTACTS_KEY);
+      if (saved) setContacts(JSON.parse(saved) as FamilyContact[]);
+    } catch { /* 무시 */ }
+  }, []);
 
   const fetchSchedules = useCallback(async (userId: string) => {
     try {
@@ -143,9 +183,7 @@ const SeniorCarePage = () => {
 
       if (rData && rData.length > 0) {
         setHealthChecks(rData as HealthCheck[]);
-        const isOldStyle = (rData as HealthCheck[]).every(
-          (r) => !HEALTH_EMOJIS.has(r.emoji)
-        );
+        const isOldStyle = (rData as HealthCheck[]).every((r) => !HEALTH_EMOJIS.has(r.emoji));
         if (isOldStyle) setShowResetBanner(true);
       } else {
         await insertDefaultHealthChecks(userId);
@@ -193,27 +231,17 @@ const SeniorCarePage = () => {
     const isDone = healthLogs.some((l) => l.routine_id === checkId && l.done_date === todayStr);
     try {
       if (isDone) {
-        await supabase
-          .from("routine_logs")
-          .delete()
-          .eq("routine_id", checkId)
-          .eq("done_date", todayStr);
-        setHealthLogs((prev) =>
-          prev.filter((l) => !(l.routine_id === checkId && l.done_date === todayStr))
-        );
+        await supabase.from("routine_logs").delete().eq("routine_id", checkId).eq("done_date", todayStr);
+        setHealthLogs((prev) => prev.filter((l) => !(l.routine_id === checkId && l.done_date === todayStr)));
       } else {
-        await supabase
-          .from("routine_logs")
-          .insert({ routine_id: checkId, user_id: user.id, done_date: todayStr });
+        await supabase.from("routine_logs").insert({ routine_id: checkId, user_id: user.id, done_date: todayStr });
         setHealthLogs((prev) => [...prev, { routine_id: checkId, done_date: todayStr }]);
         confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
-
         if ("speechSynthesis" in window) {
           const check = healthChecks.find((c) => c.id === checkId);
           if (check) {
             const utter = new SpeechSynthesisUtterance(`${check.title} 완료!`);
-            utter.lang = "ko-KR";
-            utter.rate = 0.85;
+            utter.lang = "ko-KR"; utter.rate = 0.85;
             window.speechSynthesis.speak(utter);
           }
         }
@@ -230,8 +258,7 @@ const SeniorCarePage = () => {
       confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
       if ("speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(`${schedule.title} 완료했습니다!`);
-        utter.lang = "ko-KR";
-        utter.rate = 0.85;
+        utter.lang = "ko-KR"; utter.rate = 0.85;
         window.speechSynthesis.speak(utter);
       }
     }
@@ -244,48 +271,91 @@ const SeniorCarePage = () => {
     if (user?.id) await fetchSchedules(user.id);
   };
 
+  const handleOpenEdit = (s: Schedule) => {
+    setEditingSchedule(s);
+    setEditTitle(s.title);
+    setEditDate(toInputDate(s.start_time));
+    setEditTime(toInputTime(s.start_time));
+  };
+
+  const handleEditSave = async () => {
+    if (!editingSchedule || !editTitle.trim() || !user?.id) return;
+    setIsEditSaving(true);
+    try {
+      const startDt = editDate && editTime ? `${editDate}T${editTime}:00` : editingSchedule.start_time;
+      const endDt = editDate && editTime ? addOneHour(editDate, editTime) : editingSchedule.end_time;
+      const { error } = await supabase.from("todos").update({
+        title: editTitle.trim(),
+        start_time: startDt,
+        end_time: endDt,
+      }).eq("id", editingSchedule.id);
+      if (error) throw new Error(error.message);
+      setEditingSchedule(null);
+      await fetchSchedules(user.id);
+    } catch (e) {
+      console.error("일정 수정 실패:", e);
+      alert("수정에 실패했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsEditSaving(false);
+    }
+  };
+
   const buildFamilyMessage = () => {
     const now = new Date();
-    const month = now.getMonth() + 1;
-    const day = now.getDate();
     const doneItems = healthChecks
       .map((c) => {
         const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
         return `${done ? "✅" : "❌"} ${c.title}`;
       })
       .join("\n");
-
     const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
     const total = healthChecks.length;
-
     const todayScheduleList = schedules
       .filter((s) => new Date(s.start_time).toISOString().slice(0, 10) === todayStr)
-      .map((s) => `• ${s.title} (${formatScheduleTime(s.start_time)})`)
+      .map((s) => `• ${s.title}`)
       .join("\n");
-
     return (
-      `🌸 어르신 오늘 건강 현황\n` +
-      `📅 ${month}월 ${day}일\n\n` +
-      `💊 건강 체크 (${doneCount}/${total})\n` +
-      `${doneItems}\n` +
+      `🌸 어르신 오늘 건강 현황\n📅 ${now.getMonth() + 1}월 ${now.getDate()}일\n\n` +
+      `💊 건강 체크 (${doneCount}/${total})\n${doneItems}\n` +
       (todayScheduleList ? `\n📋 오늘 일정\n${todayScheduleList}\n` : "") +
-      `\n어르신 돌봄 플래너에서 보냄 🏠`
+      `\n어르신 돌봄 플래너 🏠`
     );
   };
 
-  const handleFamilyShare = async () => {
-    const message = buildFamilyMessage();
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: "어르신 오늘 건강 현황", text: message });
-      } catch {
-        // 취소 시 무시
-      }
-    } else {
-      await navigator.clipboard.writeText(message);
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 3000);
+  const handleSaveContact = () => {
+    if (!newContactName.trim()) { alert("이름을 입력해 주세요."); return; }
+    if (!newContactPhone.trim() && !newContactEmail.trim()) {
+      alert("전화번호 또는 이메일 중 하나는 입력해 주세요."); return;
     }
+    const next: FamilyContact[] = [
+      ...contacts,
+      { id: Date.now().toString(), name: newContactName.trim(), phone: newContactPhone.trim(), email: newContactEmail.trim() },
+    ];
+    setContacts(next);
+    localStorage.setItem(CONTACTS_KEY, JSON.stringify(next));
+    setNewContactName(""); setNewContactPhone(""); setNewContactEmail("");
+    setShowAddContact(false);
+  };
+
+  const handleDeleteContact = (id: string) => {
+    const next = contacts.filter((c) => c.id !== id);
+    setContacts(next);
+    localStorage.setItem(CONTACTS_KEY, JSON.stringify(next));
+  };
+
+  // SMS: sms: 스킴 사용 (HTTPS 불필요, 문자 앱 바로 열림)
+  const handleSendSMS = (phone: string) => {
+    const msg = buildFamilyMessage();
+    const clean = phone.replace(/-/g, "");
+    window.location.href = `sms:${clean}?body=${encodeURIComponent(msg)}`;
+  };
+
+  // 이메일: mailto: 스킴 사용 (HTTPS 불필요)
+  const handleSendEmail = (email: string) => {
+    const msg = buildFamilyMessage();
+    const now = new Date();
+    const subject = encodeURIComponent(`어르신 ${now.getMonth() + 1}월 ${now.getDate()}일 건강 현황`);
+    window.location.href = `mailto:${email}?subject=${subject}&body=${encodeURIComponent(msg)}`;
   };
 
   const handleVoiceInput = () => {
@@ -293,21 +363,15 @@ const SeniorCarePage = () => {
       alert("이 기기에서는 음성 입력을 지원하지 않습니다.\n직접 입력창에 써 주세요.");
       return;
     }
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
+    if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const SR = (window.SpeechRecognition || window.webkitSpeechRecognition) as typeof SpeechRecognition;
     const recognition = new SR();
     recognition.lang = "ko-KR";
     recognition.continuous = false;
     recognition.interimResults = false;
-
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
-
     recognition.onresult = async (event) => {
       const transcript = event.results[0][0].transcript;
       setVoiceText(transcript);
@@ -320,7 +384,7 @@ const SeniorCarePage = () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ rawText: transcript }),
         });
-        const result = await res.json() as Array<{ title: string; desc: string; start: string; end: string }>;
+        const result = await res.json() as Array<{ title: string; start: string }>;
         if (Array.isArray(result) && result.length > 0) {
           const item = result[0];
           setNewTitle(item.title || transcript);
@@ -338,12 +402,7 @@ const SeniorCarePage = () => {
         setIsParsingVoice(false);
       }
     };
-
-    recognition.onerror = () => {
-      setIsListening(false);
-      alert("음성을 인식하지 못했습니다. 다시 시도해 주세요.");
-    };
-
+    recognition.onerror = () => { setIsListening(false); alert("음성을 인식하지 못했습니다."); };
     recognitionRef.current = recognition;
     recognition.start();
   };
@@ -356,25 +415,18 @@ const SeniorCarePage = () => {
       const now = new Date();
       const startDt = newDate && newTime ? `${newDate}T${newTime}:00` : now.toISOString();
       const endDt = newDate && newTime ? addOneHour(newDate, newTime) : new Date(now.getTime() + 3600000).toISOString();
-
       const { error } = await supabase.from("todos").insert([{
-        title: newTitle.trim(),
-        description: "",
-        start_time: startDt,
-        end_time: endDt,
-        user_id: user.id,
-        is_completed: false,
+        title: newTitle.trim(), description: "",
+        start_time: startDt, end_time: endDt,
+        user_id: user.id, is_completed: false,
       }]);
       if (error) throw new Error(error.message);
-
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
       if ("speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(`${newTitle.trim()} 일정이 저장되었습니다.`);
-        utter.lang = "ko-KR";
-        utter.rate = 0.85;
+        utter.lang = "ko-KR"; utter.rate = 0.85;
         window.speechSynthesis.speak(utter);
       }
-
       setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText("");
       await fetchSchedules(user.id);
       setActiveTab("schedule");
@@ -408,18 +460,12 @@ const SeniorCarePage = () => {
           <h1 className="text-4xl font-black text-sky-700 mb-3">어르신 돌봄 플래너</h1>
           <p className="text-xl text-slate-500">건강하고 즐거운 하루를 함께해요</p>
         </div>
-        <button
-          type="button"
-          onClick={() => { window.location.href = "/login"; }}
-          className="w-full max-w-sm bg-sky-500 text-white text-3xl font-black py-8 rounded-[32px] shadow-2xl active:scale-95 transition-all"
-        >
+        <button type="button" onClick={() => { window.location.href = "/login"; }}
+          className="w-full max-w-sm bg-sky-500 text-white text-3xl font-black py-8 rounded-[32px] shadow-2xl active:scale-95 transition-all">
           시작하기
         </button>
-        <button
-          type="button"
-          onClick={() => { window.location.href = "/signup"; }}
-          className="mt-6 text-xl font-bold text-sky-600 underline underline-offset-4"
-        >
+        <button type="button" onClick={() => { window.location.href = "/signup"; }}
+          className="mt-6 text-xl font-bold text-sky-600 underline underline-offset-4">
           처음이신가요? 회원가입
         </button>
       </div>
@@ -429,7 +475,7 @@ const SeniorCarePage = () => {
   return (
     <div className="min-h-screen bg-sky-50 flex flex-col" style={{ maxWidth: 480, margin: "0 auto" }}>
 
-      {/* 상단 헤더 */}
+      {/* 헤더 */}
       <header className="bg-white px-5 pt-7 pb-5 shadow-sm">
         <div className="flex justify-between items-center">
           <div>
@@ -438,19 +484,12 @@ const SeniorCarePage = () => {
             <p className="text-3xl font-black text-slate-800 leading-tight mt-0.5">{todayDate}</p>
           </div>
           <div className="flex flex-col gap-2 items-end ml-3">
-            {/* 가족 알림 버튼 */}
-            <button
-              type="button"
-              onClick={() => setShowFamilyShare(true)}
-              className="bg-rose-50 text-rose-500 border border-rose-200 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap"
-            >
+            <button type="button" onClick={() => setShowFamilyShare(true)}
+              className="bg-rose-50 text-rose-500 border border-rose-200 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap">
               <span className="text-xl">👨‍👩‍👧</span> 가족 알림
             </button>
-            <button
-              type="button"
-              onClick={() => supabase.auth.signOut().then(() => { window.location.href = "/login"; })}
-              className="bg-slate-100 text-slate-500 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95"
-            >
+            <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = "/login"; })}
+              className="bg-slate-100 text-slate-500 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95">
               나가기
             </button>
           </div>
@@ -465,25 +504,18 @@ const SeniorCarePage = () => {
 
             {/* 구버전 항목 감지 배너 */}
             {showResetBanner && (
-              <div className="bg-amber-50 border-2 border-amber-200 rounded-[24px] p-5">
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-[24px] p-5">
                 <p className="text-xl font-black text-amber-700 mb-1">⚠️ 건강 항목 교체 안내</p>
                 <p className="text-lg text-amber-600 leading-relaxed mb-4">
-                  기존 항목(아침기도, 메일 등)이 있어요.<br />
-                  어르신 건강 항목으로 바꿔드릴까요?
+                  기존 항목(아침기도, 메일 등)이 있어요.<br />어르신 건강 항목으로 바꿔드릴까요?
                 </p>
                 <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void handleResetHealthChecks()}
-                    className="flex-1 bg-amber-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95"
-                  >
+                  <button type="button" onClick={() => void handleResetHealthChecks()}
+                    className="flex-1 bg-amber-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95">
                     네, 바꿀게요
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowResetBanner(false)}
-                    className="flex-1 bg-white text-slate-400 text-xl font-bold py-4 rounded-2xl border border-slate-200 active:scale-95"
-                  >
+                  <button type="button" onClick={() => setShowResetBanner(false)}
+                    className="flex-1 bg-white text-slate-400 text-xl font-bold py-4 rounded-2xl border border-slate-200 active:scale-95">
                     그냥 둘게요
                   </button>
                 </div>
@@ -498,33 +530,23 @@ const SeniorCarePage = () => {
                   <span className="text-xl font-bold text-sky-600 bg-sky-100 px-4 py-1.5 rounded-full">
                     {doneCount}/{totalCount}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowResetConfirm(true)}
-                    className="text-xl text-slate-400 bg-slate-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95"
-                    title="항목 초기화"
-                  >
+                  <button type="button" onClick={() => setShowResetConfirm(true)}
+                    className="text-xl text-slate-400 bg-slate-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95">
                     ⚙️
                   </button>
                 </div>
               </div>
 
-              {/* 진행 바 */}
               <div className="w-full bg-slate-100 rounded-full h-4 mb-4">
-                <div
-                  className="bg-sky-400 h-4 rounded-full transition-all duration-700"
-                  style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }}
-                />
+                <div className="bg-sky-400 h-4 rounded-full transition-all duration-700"
+                  style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }} />
               </div>
 
               {doneCount === totalCount && totalCount > 0 && (
                 <div className="text-center mb-4 py-3 bg-sky-50 rounded-2xl">
                   <p className="text-xl font-black text-sky-600">🎉 오늘 건강 체크 완료!</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowFamilyShare(true)}
-                    className="mt-2 text-lg font-bold text-rose-500 underline underline-offset-2"
-                  >
+                  <button type="button" onClick={() => setShowFamilyShare(true)}
+                    className="mt-2 text-lg font-bold text-rose-500 underline underline-offset-2">
                     👨‍👩‍👧 가족에게 알리기
                   </button>
                 </div>
@@ -532,23 +554,13 @@ const SeniorCarePage = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 {healthChecks.map((check) => {
-                  const isDone = healthLogs.some(
-                    (l) => l.routine_id === check.id && l.done_date === todayStr
-                  );
+                  const isDone = healthLogs.some((l) => l.routine_id === check.id && l.done_date === todayStr);
                   return (
-                    <button
-                      key={check.id}
-                      type="button"
-                      onClick={() => void handleToggleHealth(check.id)}
+                    <button key={check.id} type="button" onClick={() => void handleToggleHealth(check.id)}
                       className={`relative flex flex-col items-center justify-center py-7 rounded-[24px] transition-all active:scale-95 select-none ${
-                        isDone
-                          ? "bg-sky-500 shadow-lg shadow-sky-200"
-                          : "bg-sky-50 border-2 border-sky-100"
-                      }`}
-                    >
-                      {isDone && (
-                        <span className="absolute top-2 right-3 text-xl">✅</span>
-                      )}
+                        isDone ? "bg-sky-500 shadow-lg shadow-sky-200" : "bg-sky-50 border-2 border-sky-100"
+                      }`}>
+                      {isDone && <span className="absolute top-2 right-3 text-xl">✅</span>}
                       <span className="text-5xl mb-2">{check.emoji}</span>
                       <span className={`text-xl font-black text-center leading-tight px-1 ${isDone ? "text-white" : "text-slate-700"}`}>
                         {check.title}
@@ -576,30 +588,28 @@ const SeniorCarePage = () => {
               ) : (
                 <div className="space-y-3">
                   {todaySchedules.map((s) => (
-                    <div
-                      key={s.id}
-                      className={`bg-white rounded-[24px] p-5 flex items-center gap-4 shadow-sm ${s.is_completed ? "opacity-60" : ""}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleSchedule(s)}
-                        className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
-                          s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
-                        }`}
-                      >
-                        {s.is_completed && (
-                          <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : "text-slate-800"}`}>
-                          {s.title}
-                        </p>
-                        <p className="text-lg font-bold text-sky-500 mt-0.5">
-                          {formatScheduleTime(s.start_time)}
-                        </p>
+                    <div key={s.id} className={`bg-white rounded-[24px] p-5 shadow-sm ${s.is_completed ? "opacity-60" : ""}`}>
+                      <div className="flex items-center gap-3">
+                        <button type="button" onClick={() => void handleToggleSchedule(s)}
+                          className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
+                            s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
+                          }`}>
+                          {s.is_completed && (
+                            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : "text-slate-800"}`}>
+                            {s.title}
+                          </p>
+                          <p className="text-lg font-bold text-sky-500 mt-0.5">{formatScheduleTime(s.start_time)}</p>
+                        </div>
+                        <button type="button" onClick={() => handleOpenEdit(s)}
+                          className="w-12 h-12 flex items-center justify-center text-2xl bg-slate-50 rounded-2xl active:scale-90 flex-shrink-0">
+                          ✏️
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -622,18 +632,13 @@ const SeniorCarePage = () => {
               schedules.map((s) => {
                 const isPast = new Date(s.start_time) < new Date() && !s.is_completed;
                 return (
-                  <div
-                    key={s.id}
-                    className={`bg-white rounded-[24px] p-5 shadow-sm ${isPast ? "border-l-4 border-rose-400" : ""}`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleSchedule(s)}
+                  <div key={s.id} className={`bg-white rounded-[24px] p-5 shadow-sm ${isPast ? "border-l-4 border-rose-400" : ""}`}>
+                    <div className="flex items-center gap-3">
+                      {/* 완료 버튼 */}
+                      <button type="button" onClick={() => void handleToggleSchedule(s)}
                         className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
                           s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
-                        }`}
-                      >
+                        }`}>
                         {s.is_completed && (
                           <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -646,14 +651,17 @@ const SeniorCarePage = () => {
                         </p>
                         <p className={`text-lg font-bold mt-0.5 ${isPast && !s.is_completed ? "text-rose-400" : "text-sky-500"}`}>
                           {formatScheduleTime(s.start_time)}
-                          {isPast && !s.is_completed && " ⚠️ 지난 일정"}
+                          {isPast && !s.is_completed && " ⚠️"}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteSchedule(s.id)}
-                        className="w-12 h-12 flex items-center justify-center text-2xl text-slate-300 active:text-rose-400 transition-all flex-shrink-0"
-                      >
+                      {/* 수정 버튼 */}
+                      <button type="button" onClick={() => handleOpenEdit(s)}
+                        className="w-12 h-12 flex items-center justify-center text-2xl bg-blue-50 rounded-2xl active:scale-90 flex-shrink-0">
+                        ✏️
+                      </button>
+                      {/* 삭제 버튼 */}
+                      <button type="button" onClick={() => void handleDeleteSchedule(s.id)}
+                        className="w-12 h-12 flex items-center justify-center text-2xl bg-red-50 rounded-2xl active:scale-90 flex-shrink-0">
                         🗑️
                       </button>
                     </div>
@@ -668,110 +676,209 @@ const SeniorCarePage = () => {
         {activeTab === "add" && (
           <div className="px-4 pt-5 space-y-4">
             <h2 className="text-2xl font-black text-slate-700">일정 추가</h2>
-
             {voiceText && (
               <div className="bg-sky-50 border-2 border-sky-200 rounded-[24px] p-5">
                 <p className="text-lg font-bold text-sky-600 mb-1">🎤 말씀하신 내용</p>
                 <p className="text-xl font-bold text-slate-700">&ldquo;{voiceText}&rdquo;</p>
-                {isParsingVoice && (
-                  <p className="text-lg text-sky-400 mt-2 animate-pulse">날짜·시간 분석 중...</p>
-                )}
+                {isParsingVoice && <p className="text-lg text-sky-400 mt-2 animate-pulse">날짜·시간 분석 중...</p>}
               </div>
             )}
-
             <div className="bg-white rounded-[24px] p-5 shadow-sm space-y-4">
               <div>
                 <label className="block text-xl font-black text-slate-600 mb-2">📝 일정 이름</label>
-                <input
-                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300 placeholder:text-slate-300"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="예: 병원 진료, 복지관"
-                />
+                <input className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300 placeholder:text-slate-300"
+                  value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="예: 병원 진료, 복지관" />
               </div>
               <div>
                 <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
-                <input
-                  type="date"
-                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
-                  value={newDate}
-                  onChange={(e) => setNewDate(e.target.value)}
-                />
+                <input type="date" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={newDate} onChange={(e) => setNewDate(e.target.value)} />
               </div>
               <div>
                 <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
-                <input
-                  type="time"
-                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
-                  value={newTime}
-                  onChange={(e) => setNewTime(e.target.value)}
-                />
+                <input type="time" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={newTime} onChange={(e) => setNewTime(e.target.value)} />
               </div>
             </div>
-
-            <button
-              type="button"
-              onClick={() => void handleSaveSchedule()}
-              disabled={!newTitle.trim() || isSaving}
-              className="w-full bg-sky-500 text-white text-3xl font-black py-7 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40"
-            >
+            <button type="button" onClick={() => void handleSaveSchedule()} disabled={!newTitle.trim() || isSaving}
+              className="w-full bg-sky-500 text-white text-3xl font-black py-7 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40">
               {isSaving ? "저장 중..." : "일정 저장 ✅"}
             </button>
-            <button
-              type="button"
-              onClick={() => { setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText(""); }}
-              className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95 transition-all"
-            >
+            <button type="button" onClick={() => { setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText(""); }}
+              className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95 transition-all">
               다시 입력하기
             </button>
           </div>
         )}
       </main>
 
+      {/* ── 일정 수정 모달 ── */}
+      {editingSchedule && (
+        <div className="fixed inset-0 bg-black/60 flex items-end justify-center z-50">
+          <div className="bg-white rounded-t-[40px] w-full max-w-[480px] p-7 shadow-2xl">
+            <h3 className="text-2xl font-black text-slate-800 mb-5">✏️ 일정 수정</h3>
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">📝 일정 이름</label>
+                <input className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
+                <input type="date" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
+                <input type="time" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => void handleEditSave()} disabled={!editTitle.trim() || isEditSaving}
+                className="flex-1 bg-sky-500 text-white text-2xl font-black py-6 rounded-[24px] active:scale-95 disabled:opacity-40">
+                {isEditSaving ? "저장 중..." : "수정 완료 ✅"}
+              </button>
+              <button type="button" onClick={() => setEditingSchedule(null)}
+                className="flex-1 bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── 가족 알림 모달 ── */}
       {showFamilyShare && (
         <div className="fixed inset-0 bg-black/60 flex items-end justify-center z-50">
-          <div className="bg-white rounded-t-[40px] w-full max-w-[480px] p-7 shadow-2xl">
-            <h3 className="text-2xl font-black text-slate-800 mb-1">👨‍👩‍👧 가족에게 알리기</h3>
-            <p className="text-lg text-slate-500 mb-5">오늘 건강 현황을 가족에게 보내드려요</p>
+          <div className="bg-white rounded-t-[40px] w-full max-w-[480px] shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
 
-            {/* 미리보기 */}
-            <div className="bg-sky-50 rounded-[20px] p-5 mb-5 space-y-1">
-              {healthChecks.map((c) => {
-                const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
-                return (
-                  <p key={c.id} className={`text-xl font-bold ${done ? "text-sky-700" : "text-slate-400"}`}>
-                    {done ? "✅" : "❌"} {c.title}
-                  </p>
-                );
-              })}
-              {todaySchedules.length > 0 && (
-                <>
-                  <p className="text-lg font-black text-slate-500 pt-2">오늘 일정</p>
-                  {todaySchedules.map((s) => (
-                    <p key={s.id} className="text-lg font-bold text-slate-600">
-                      • {s.title}
-                    </p>
-                  ))}
-                </>
-              )}
+            <div className="px-7 pt-7 pb-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800">👨‍👩‍👧 가족·담당자 알리기</h3>
+                <p className="text-lg text-slate-500 mt-0.5">오늘 건강 현황을 바로 보내드려요</p>
+              </div>
+              <button type="button" onClick={() => { setShowFamilyShare(false); setShowAddContact(false); }}
+                className="text-2xl text-slate-400 bg-slate-100 w-11 h-11 rounded-full flex items-center justify-center active:scale-95">
+                ✕
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void handleFamilyShare()}
-              className="w-full bg-rose-500 text-white text-2xl font-black py-6 rounded-[24px] shadow-lg active:scale-95 transition-all mb-3"
-            >
-              {shareCopied ? "✅ 복사됨! 붙여넣기 하세요" : "📤 카카오톡·문자로 보내기"}
-            </button>
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-            <button
-              type="button"
-              onClick={() => { setShowFamilyShare(false); setShareCopied(false); }}
-              className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95"
-            >
-              닫기
-            </button>
+              {/* 오늘 건강 현황 미리보기 */}
+              <div className="bg-sky-50 rounded-[20px] p-5 space-y-1.5">
+                <p className="text-lg font-black text-sky-700 mb-2">📋 보낼 내용 미리보기</p>
+                {healthChecks.map((c) => {
+                  const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
+                  return (
+                    <p key={c.id} className={`text-xl font-bold ${done ? "text-sky-700" : "text-slate-400"}`}>
+                      {done ? "✅" : "❌"} {c.title}
+                    </p>
+                  );
+                })}
+                {todaySchedules.length > 0 && (
+                  <>
+                    <p className="text-base font-black text-sky-600 pt-2">오늘 일정</p>
+                    {todaySchedules.map((s) => (
+                      <p key={s.id} className="text-lg font-bold text-slate-600">• {s.title}</p>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {/* 연락처 목록 */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xl font-black text-slate-700">📱 연락처</p>
+                  <button type="button" onClick={() => setShowAddContact(!showAddContact)}
+                    className="text-lg font-black text-sky-600 bg-sky-50 px-4 py-2 rounded-2xl border border-sky-200 active:scale-95">
+                    + 추가
+                  </button>
+                </div>
+
+                {/* 연락처 추가 폼 */}
+                {showAddContact && (
+                  <div className="bg-slate-50 rounded-[20px] p-5 mb-4 space-y-3">
+                    <p className="text-lg font-black text-slate-600">새 연락처 등록</p>
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                      placeholder="이름 (예: 딸 김○○, 담당 간호사)"
+                      value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                      placeholder="전화번호 (예: 010-1234-5678)"
+                      type="tel" value={newContactPhone} onChange={(e) => setNewContactPhone(e.target.value)} />
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                      placeholder="이메일 (선택)"
+                      type="email" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
+                    <div className="flex gap-3">
+                      <button type="button" onClick={handleSaveContact}
+                        className="flex-1 bg-sky-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95">
+                        저장
+                      </button>
+                      <button type="button" onClick={() => setShowAddContact(false)}
+                        className="flex-1 bg-white text-slate-400 text-xl font-bold py-4 rounded-2xl border border-slate-200 active:scale-95">
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 등록된 연락처 */}
+                {contacts.length === 0 ? (
+                  <div className="bg-slate-50 rounded-[20px] p-6 text-center">
+                    <p className="text-xl font-bold text-slate-400">등록된 연락처가 없어요</p>
+                    <p className="text-lg text-slate-300 mt-1">위 + 추가 버튼으로 등록하세요</p>
+                    <p className="text-base text-slate-400 mt-3 bg-amber-50 rounded-xl px-3 py-2">
+                      📌 가족, 요양보호사, 담당 간호사 등록 가능
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {contacts.map((contact) => (
+                      <div key={contact.id} className="bg-white border border-slate-100 rounded-[20px] p-5 shadow-sm">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-2xl font-black text-slate-800">{contact.name}</p>
+                          <button type="button" onClick={() => handleDeleteContact(contact.id)}
+                            className="text-slate-300 text-xl active:text-rose-400 active:scale-90">
+                            🗑️
+                          </button>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          {contact.phone && (
+                            <button type="button" onClick={() => handleSendSMS(contact.phone)}
+                              className="w-full bg-green-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
+                              <span>💬</span> 문자 보내기 ({contact.phone})
+                            </button>
+                          )}
+                          {contact.email && (
+                            <button type="button" onClick={() => handleSendEmail(contact.email)}
+                              className="w-full bg-sky-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
+                              <span>📧</span> 이메일 보내기
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 직접 선택해서 보내기 안내 */}
+              <div className="bg-amber-50 border border-amber-200 rounded-[20px] p-5">
+                <p className="text-lg font-black text-amber-700 mb-1">📌 카카오톡으로 보내는 방법</p>
+                <p className="text-lg text-amber-600 leading-relaxed">
+                  아래 내용을 길게 눌러 복사한 뒤,<br />카카오톡을 열고 붙여넣기 하세요
+                </p>
+                <textarea
+                  readOnly
+                  className="w-full mt-3 bg-white rounded-2xl p-4 text-lg text-slate-700 font-bold border border-amber-200 resize-none"
+                  rows={6}
+                  value={buildFamilyMessage()}
+                  onFocus={(e) => e.target.select()}
+                />
+              </div>
+
+            </div>
           </div>
         </div>
       )}
@@ -781,25 +888,18 @@ const SeniorCarePage = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-6">
           <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
             <p className="text-2xl font-black text-slate-800 mb-2">건강 체크 초기화</p>
-            <p className="text-lg text-slate-500 mb-2 leading-relaxed">기존 항목을 모두 지우고 아래 항목으로 바꿀까요?</p>
             <div className="bg-sky-50 rounded-2xl p-4 mb-5 space-y-1">
               {DEFAULT_HEALTH_CHECKS.map((c) => (
                 <p key={c.title} className="text-lg font-bold text-sky-700">{c.emoji} {c.title}</p>
               ))}
             </div>
             <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => void handleResetHealthChecks()}
-                className="flex-1 bg-sky-500 text-white text-xl font-black py-5 rounded-2xl active:scale-95"
-              >
+              <button type="button" onClick={() => void handleResetHealthChecks()}
+                className="flex-1 bg-sky-500 text-white text-xl font-black py-5 rounded-2xl active:scale-95">
                 네, 바꿀게요
               </button>
-              <button
-                type="button"
-                onClick={() => setShowResetConfirm(false)}
-                className="flex-1 bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-2xl active:scale-95"
-              >
+              <button type="button" onClick={() => setShowResetConfirm(false)}
+                className="flex-1 bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-2xl active:scale-95">
                 아니요
               </button>
             </div>
@@ -810,31 +910,20 @@ const SeniorCarePage = () => {
       {/* 하단 네비게이션 */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 shadow-2xl" style={{ maxWidth: 480, margin: "0 auto" }}>
         <div className="flex items-center justify-around px-4 py-3">
-          <button
-            type="button"
-            onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "home" ? "bg-sky-50" : ""}`}
-          >
+          <button type="button" onClick={() => setActiveTab("home")}
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "home" ? "bg-sky-50" : ""}`}>
             <span className="text-4xl">🏠</span>
             <span className={`text-lg font-black ${activeTab === "home" ? "text-sky-600" : "text-slate-400"}`}>홈</span>
           </button>
-
-          <button
-            type="button"
-            onClick={handleVoiceInput}
+          <button type="button" onClick={handleVoiceInput}
             className={`flex flex-col items-center justify-center w-24 h-24 rounded-full shadow-2xl transition-all active:scale-95 -mt-8 ${
               isListening ? "bg-rose-500 animate-pulse shadow-rose-300" : "bg-sky-500 shadow-sky-200"
-            }`}
-          >
+            }`}>
             <span className="text-4xl">{isListening ? "🛑" : "🎤"}</span>
             <span className="text-base font-black text-white">{isListening ? "멈추기" : "말하기"}</span>
           </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("schedule")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "schedule" ? "bg-sky-50" : ""}`}
-          >
+          <button type="button" onClick={() => setActiveTab("schedule")}
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "schedule" ? "bg-sky-50" : ""}`}>
             <span className="text-4xl">📋</span>
             <span className={`text-lg font-black ${activeTab === "schedule" ? "text-sky-600" : "text-slate-400"}`}>일정</span>
           </button>
