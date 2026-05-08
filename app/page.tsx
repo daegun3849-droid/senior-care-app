@@ -2,7 +2,7 @@
 
 /**
  * 어르신 돌봄 플래너 - 메인 페이지
- * 큰 글씨, 간단한 UI, 음성 입력 지원
+ * 큰 글씨, 간단한 UI, 음성 입력, 가족 알림 지원
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -31,11 +31,13 @@ interface HealthLog {
   done_date: string;
 }
 
+const HEALTH_EMOJIS = new Set(["💊", "🩸", "🩺", "🍚", "🚶", "💧", "🏥", "🩻", "🫀", "💉"]);
+
 const DEFAULT_HEALTH_CHECKS = [
   { emoji: "💊", title: "혈압약", routine_time: "08:00" },
   { emoji: "🩸", title: "당뇨약", routine_time: "08:30" },
   { emoji: "🩺", title: "혈압 측정", routine_time: "09:00" },
-  { emoji: "🍚", title: "식사 챙기기", routine_time: "12:00" },
+  { emoji: "🍚", title: "세 끼 식사", routine_time: "12:00" },
   { emoji: "🚶", title: "산책·운동", routine_time: "10:00" },
   { emoji: "💧", title: "물 마시기", routine_time: "15:00" },
 ];
@@ -90,7 +92,11 @@ const SeniorCarePage = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceText, setVoiceText] = useState("");
   const [isParsingVoice, setIsParsingVoice] = useState(false);
+
+  const [showResetBanner, setShowResetBanner] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showFamilyShare, setShowFamilyShare] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState("");
@@ -114,6 +120,19 @@ const SeniorCarePage = () => {
     }
   }, []);
 
+  const insertDefaultHealthChecks = useCallback(async (userId: string) => {
+    const inserts = DEFAULT_HEALTH_CHECKS.map((item, i) => ({
+      user_id: userId,
+      title: item.title,
+      emoji: item.emoji,
+      sort_order: i,
+      routine_time: item.routine_time,
+      routine_end_time: null,
+    }));
+    const { data: inserted } = await supabase.from("routines").insert(inserts).select();
+    if (inserted) setHealthChecks(inserted as HealthCheck[]);
+  }, []);
+
   const fetchHealthChecks = useCallback(async (userId: string) => {
     try {
       const { data: rData } = await supabase
@@ -124,6 +143,10 @@ const SeniorCarePage = () => {
 
       if (rData && rData.length > 0) {
         setHealthChecks(rData as HealthCheck[]);
+        const isOldStyle = (rData as HealthCheck[]).every(
+          (r) => !HEALTH_EMOJIS.has(r.emoji)
+        );
+        if (isOldStyle) setShowResetBanner(true);
       } else {
         await insertDefaultHealthChecks(userId);
       }
@@ -137,22 +160,9 @@ const SeniorCarePage = () => {
     } catch (e) {
       console.error("건강 체크 조회 실패:", e);
     }
-  }, [todayStr]);
+  }, [todayStr, insertDefaultHealthChecks]);
 
-  const insertDefaultHealthChecks = async (userId: string) => {
-    const inserts = DEFAULT_HEALTH_CHECKS.map((item, i) => ({
-      user_id: userId,
-      title: item.title,
-      emoji: item.emoji,
-      sort_order: i,
-      routine_time: item.routine_time,
-      routine_end_time: null,
-    }));
-    const { data: inserted } = await supabase.from("routines").insert(inserts).select();
-    if (inserted) setHealthChecks(inserted as HealthCheck[]);
-  };
-
-  const handleResetHealthChecks = async () => {
+  const handleResetHealthChecks = useCallback(async () => {
     if (!user) return;
     try {
       await supabase.from("routine_logs").delete().eq("user_id", user.id);
@@ -161,10 +171,11 @@ const SeniorCarePage = () => {
       setHealthChecks([]);
       await insertDefaultHealthChecks(user.id);
       setShowResetConfirm(false);
+      setShowResetBanner(false);
     } catch (e) {
       console.error("건강 체크 초기화 실패:", e);
     }
-  };
+  }, [user, insertDefaultHealthChecks]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user: u } }) => {
@@ -195,7 +206,6 @@ const SeniorCarePage = () => {
           .from("routine_logs")
           .insert({ routine_id: checkId, user_id: user.id, done_date: todayStr });
         setHealthLogs((prev) => [...prev, { routine_id: checkId, done_date: todayStr }]);
-
         confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
 
         if ("speechSynthesis" in window) {
@@ -234,12 +244,55 @@ const SeniorCarePage = () => {
     if (user?.id) await fetchSchedules(user.id);
   };
 
+  const buildFamilyMessage = () => {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const doneItems = healthChecks
+      .map((c) => {
+        const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
+        return `${done ? "✅" : "❌"} ${c.title}`;
+      })
+      .join("\n");
+
+    const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
+    const total = healthChecks.length;
+
+    const todayScheduleList = schedules
+      .filter((s) => new Date(s.start_time).toISOString().slice(0, 10) === todayStr)
+      .map((s) => `• ${s.title} (${formatScheduleTime(s.start_time)})`)
+      .join("\n");
+
+    return (
+      `🌸 어르신 오늘 건강 현황\n` +
+      `📅 ${month}월 ${day}일\n\n` +
+      `💊 건강 체크 (${doneCount}/${total})\n` +
+      `${doneItems}\n` +
+      (todayScheduleList ? `\n📋 오늘 일정\n${todayScheduleList}\n` : "") +
+      `\n어르신 돌봄 플래너에서 보냄 🏠`
+    );
+  };
+
+  const handleFamilyShare = async () => {
+    const message = buildFamilyMessage();
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "어르신 오늘 건강 현황", text: message });
+      } catch {
+        // 취소 시 무시
+      }
+    } else {
+      await navigator.clipboard.writeText(message);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 3000);
+    }
+  };
+
   const handleVoiceInput = () => {
     if (!("SpeechRecognition" in window || "webkitSpeechRecognition" in window)) {
       alert("이 기기에서는 음성 입력을 지원하지 않습니다.\n직접 입력창에 써 주세요.");
       return;
     }
-
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
@@ -296,23 +349,13 @@ const SeniorCarePage = () => {
   };
 
   const handleSaveSchedule = async () => {
-    if (!newTitle.trim()) {
-      alert("일정 제목을 입력해 주세요.");
-      return;
-    }
-    if (!user?.id) {
-      alert("로그인이 필요합니다.");
-      return;
-    }
+    if (!newTitle.trim()) { alert("일정 제목을 입력해 주세요."); return; }
+    if (!user?.id) { alert("로그인이 필요합니다."); return; }
     setIsSaving(true);
     try {
       const now = new Date();
-      const startDt = newDate && newTime
-        ? `${newDate}T${newTime}:00`
-        : now.toISOString();
-      const endDt = newDate && newTime
-        ? addOneHour(newDate, newTime)
-        : new Date(now.getTime() + 3600000).toISOString();
+      const startDt = newDate && newTime ? `${newDate}T${newTime}:00` : now.toISOString();
+      const endDt = newDate && newTime ? addOneHour(newDate, newTime) : new Date(now.getTime() + 3600000).toISOString();
 
       const { error } = await supabase.from("todos").insert([{
         title: newTitle.trim(),
@@ -325,7 +368,6 @@ const SeniorCarePage = () => {
       if (error) throw new Error(error.message);
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
-
       if ("speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(`${newTitle.trim()} 일정이 저장되었습니다.`);
         utter.lang = "ko-KR";
@@ -333,10 +375,7 @@ const SeniorCarePage = () => {
         window.speechSynthesis.speak(utter);
       }
 
-      setNewTitle("");
-      setNewDate("");
-      setNewTime("");
-      setVoiceText("");
+      setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText("");
       await fetchSchedules(user.id);
       setActiveTab("schedule");
     } catch (e) {
@@ -347,11 +386,9 @@ const SeniorCarePage = () => {
     }
   };
 
-  const todaySchedules = schedules.filter((s) => {
-    const d = new Date(s.start_time);
-    return d.toISOString().slice(0, 10) === todayStr;
-  });
-
+  const todaySchedules = schedules.filter(
+    (s) => new Date(s.start_time).toISOString().slice(0, 10) === todayStr
+  );
   const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
   const totalCount = healthChecks.length;
 
@@ -400,24 +437,58 @@ const SeniorCarePage = () => {
             <p className="text-lg font-bold text-slate-400 leading-tight">{todayYear}</p>
             <p className="text-3xl font-black text-slate-800 leading-tight mt-0.5">{todayDate}</p>
           </div>
-          <button
-            type="button"
-            onClick={() =>
-              supabase.auth.signOut().then(() => { window.location.href = "/login"; })
-            }
-            className="bg-slate-100 text-slate-500 text-lg font-bold px-5 py-3 rounded-2xl active:scale-95 shrink-0 ml-3"
-          >
-            나가기
-          </button>
+          <div className="flex flex-col gap-2 items-end ml-3">
+            {/* 가족 알림 버튼 */}
+            <button
+              type="button"
+              onClick={() => setShowFamilyShare(true)}
+              className="bg-rose-50 text-rose-500 border border-rose-200 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <span className="text-xl">👨‍👩‍👧</span> 가족 알림
+            </button>
+            <button
+              type="button"
+              onClick={() => supabase.auth.signOut().then(() => { window.location.href = "/login"; })}
+              className="bg-slate-100 text-slate-500 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95"
+            >
+              나가기
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* 탭 콘텐츠 */}
       <main className="flex-1 overflow-y-auto pb-36">
 
         {/* ── 홈 탭 ── */}
         {activeTab === "home" && (
           <div className="px-4 pt-5 space-y-5">
+
+            {/* 구버전 항목 감지 배너 */}
+            {showResetBanner && (
+              <div className="bg-amber-50 border-2 border-amber-200 rounded-[24px] p-5">
+                <p className="text-xl font-black text-amber-700 mb-1">⚠️ 건강 항목 교체 안내</p>
+                <p className="text-lg text-amber-600 leading-relaxed mb-4">
+                  기존 항목(아침기도, 메일 등)이 있어요.<br />
+                  어르신 건강 항목으로 바꿔드릴까요?
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleResetHealthChecks()}
+                    className="flex-1 bg-amber-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95"
+                  >
+                    네, 바꿀게요
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetBanner(false)}
+                    className="flex-1 bg-white text-slate-400 text-xl font-bold py-4 rounded-2xl border border-slate-200 active:scale-95"
+                  >
+                    그냥 둘게요
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* 오늘 건강 체크 */}
             <section className="bg-white rounded-[28px] p-5 shadow-sm">
@@ -430,7 +501,7 @@ const SeniorCarePage = () => {
                   <button
                     type="button"
                     onClick={() => setShowResetConfirm(true)}
-                    className="text-sm font-bold text-slate-400 bg-slate-100 px-3 py-2 rounded-xl active:scale-95"
+                    className="text-xl text-slate-400 bg-slate-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95"
                     title="항목 초기화"
                   >
                     ⚙️
@@ -447,9 +518,16 @@ const SeniorCarePage = () => {
               </div>
 
               {doneCount === totalCount && totalCount > 0 && (
-                <p className="text-center text-xl font-black text-sky-600 mb-3">
-                  🎉 오늘 건강 체크 모두 완료!
-                </p>
+                <div className="text-center mb-4 py-3 bg-sky-50 rounded-2xl">
+                  <p className="text-xl font-black text-sky-600">🎉 오늘 건강 체크 완료!</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowFamilyShare(true)}
+                    className="mt-2 text-lg font-bold text-rose-500 underline underline-offset-2"
+                  >
+                    👨‍👩‍👧 가족에게 알리기
+                  </button>
+                </div>
               )}
 
               <div className="grid grid-cols-2 gap-3">
@@ -500,17 +578,13 @@ const SeniorCarePage = () => {
                   {todaySchedules.map((s) => (
                     <div
                       key={s.id}
-                      className={`bg-white rounded-[24px] p-5 flex items-center gap-4 shadow-sm ${
-                        s.is_completed ? "opacity-60" : ""
-                      }`}
+                      className={`bg-white rounded-[24px] p-5 flex items-center gap-4 shadow-sm ${s.is_completed ? "opacity-60" : ""}`}
                     >
                       <button
                         type="button"
                         onClick={() => void handleToggleSchedule(s)}
                         className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
-                          s.is_completed
-                            ? "bg-sky-500 border-sky-500"
-                            : "border-slate-300 bg-white"
+                          s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
                         }`}
                       >
                         {s.is_completed && (
@@ -572,13 +646,13 @@ const SeniorCarePage = () => {
                         </p>
                         <p className={`text-lg font-bold mt-0.5 ${isPast && !s.is_completed ? "text-rose-400" : "text-sky-500"}`}>
                           {formatScheduleTime(s.start_time)}
-                          {isPast && !s.is_completed && " ⚠️"}
+                          {isPast && !s.is_completed && " ⚠️ 지난 일정"}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => void handleDeleteSchedule(s.id)}
-                        className="w-12 h-12 flex items-center justify-center text-2xl text-slate-300 active:text-rose-400 active:scale-90 transition-all flex-shrink-0"
+                        className="w-12 h-12 flex items-center justify-center text-2xl text-slate-300 active:text-rose-400 transition-all flex-shrink-0"
                       >
                         🗑️
                       </button>
@@ -615,7 +689,6 @@ const SeniorCarePage = () => {
                   placeholder="예: 병원 진료, 복지관"
                 />
               </div>
-
               <div>
                 <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
                 <input
@@ -625,7 +698,6 @@ const SeniorCarePage = () => {
                   onChange={(e) => setNewDate(e.target.value)}
                 />
               </div>
-
               <div>
                 <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
                 <input
@@ -645,7 +717,6 @@ const SeniorCarePage = () => {
             >
               {isSaving ? "저장 중..." : "일정 저장 ✅"}
             </button>
-
             <button
               type="button"
               onClick={() => { setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText(""); }}
@@ -655,18 +726,67 @@ const SeniorCarePage = () => {
             </button>
           </div>
         )}
-
       </main>
+
+      {/* ── 가족 알림 모달 ── */}
+      {showFamilyShare && (
+        <div className="fixed inset-0 bg-black/60 flex items-end justify-center z-50">
+          <div className="bg-white rounded-t-[40px] w-full max-w-[480px] p-7 shadow-2xl">
+            <h3 className="text-2xl font-black text-slate-800 mb-1">👨‍👩‍👧 가족에게 알리기</h3>
+            <p className="text-lg text-slate-500 mb-5">오늘 건강 현황을 가족에게 보내드려요</p>
+
+            {/* 미리보기 */}
+            <div className="bg-sky-50 rounded-[20px] p-5 mb-5 space-y-1">
+              {healthChecks.map((c) => {
+                const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
+                return (
+                  <p key={c.id} className={`text-xl font-bold ${done ? "text-sky-700" : "text-slate-400"}`}>
+                    {done ? "✅" : "❌"} {c.title}
+                  </p>
+                );
+              })}
+              {todaySchedules.length > 0 && (
+                <>
+                  <p className="text-lg font-black text-slate-500 pt-2">오늘 일정</p>
+                  {todaySchedules.map((s) => (
+                    <p key={s.id} className="text-lg font-bold text-slate-600">
+                      • {s.title}
+                    </p>
+                  ))}
+                </>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void handleFamilyShare()}
+              className="w-full bg-rose-500 text-white text-2xl font-black py-6 rounded-[24px] shadow-lg active:scale-95 transition-all mb-3"
+            >
+              {shareCopied ? "✅ 복사됨! 붙여넣기 하세요" : "📤 카카오톡·문자로 보내기"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setShowFamilyShare(false); setShareCopied(false); }}
+              className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95"
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 건강 체크 초기화 확인 모달 */}
       {showResetConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-6">
           <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
             <p className="text-2xl font-black text-slate-800 mb-2">건강 체크 초기화</p>
-            <p className="text-lg text-slate-500 mb-6 leading-relaxed">
-              기존 항목을 모두 지우고<br />어르신 기본 항목으로 바꿀까요?<br />
-              <span className="text-sky-600 font-bold">(혈압약, 당뇨약, 혈압측정, 식사, 산책, 물 마시기)</span>
-            </p>
+            <p className="text-lg text-slate-500 mb-2 leading-relaxed">기존 항목을 모두 지우고 아래 항목으로 바꿀까요?</p>
+            <div className="bg-sky-50 rounded-2xl p-4 mb-5 space-y-1">
+              {DEFAULT_HEALTH_CHECKS.map((c) => (
+                <p key={c.title} className="text-lg font-bold text-sky-700">{c.emoji} {c.title}</p>
+              ))}
+            </div>
             <div className="flex gap-3">
               <button
                 type="button"
@@ -720,7 +840,6 @@ const SeniorCarePage = () => {
           </button>
         </div>
       </nav>
-
     </div>
   );
 };
