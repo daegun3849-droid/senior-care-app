@@ -12,9 +12,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai-todo-manager.vercel.app';
-const TITLE = 'AI 할 일 관리 서비스';
-const DESCRIPTION = 'AI가 도와주는 똑똑한 할 일 관리 서비스';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://senior-care-app.vercel.app';
+const TITLE = '어르신 돌봄 플래너';
+const DESCRIPTION = '음성으로 간편하게! 어르신을 위한 건강·일정 관리 서비스';
 
 export const metadata: Metadata = {
   /* ── 기본 메타데이터 ── */
@@ -24,9 +24,9 @@ export const metadata: Metadata = {
   },
   description: DESCRIPTION,
   applicationName: TITLE,
-  keywords: ['할 일', 'todo', 'AI', '생산성', '일정 관리', '할일 관리'],
-  authors: [{ name: 'AI Todo Manager Team' }],
-  creator: 'AI Todo Manager',
+  keywords: ['어르신', '노인', '돌봄', '복약 알림', '일정 관리', '음성 입력', '건강 체크'],
+  authors: [{ name: 'Senior Care App Team' }],
+  creator: 'Senior Care App',
 
   /* ── 검색 엔진 ── */
   robots: {
