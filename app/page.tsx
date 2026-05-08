@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
+import confetti from "canvas-confetti";
 
 interface Schedule {
   id: string;
@@ -31,16 +32,21 @@ interface HealthLog {
 }
 
 const DEFAULT_HEALTH_CHECKS = [
-  { emoji: "💊", title: "아침 약 먹기", routine_time: "08:00" },
-  { emoji: "🍚", title: "점심 식사", routine_time: "12:00" },
-  { emoji: "💊", title: "저녁 약 먹기", routine_time: "18:00" },
-  { emoji: "🚶", title: "오늘 산책·운동", routine_time: "10:00" },
+  { emoji: "💊", title: "혈압약", routine_time: "08:00" },
+  { emoji: "🩸", title: "당뇨약", routine_time: "08:30" },
+  { emoji: "🩺", title: "혈압 측정", routine_time: "09:00" },
+  { emoji: "🍚", title: "식사 챙기기", routine_time: "12:00" },
+  { emoji: "🚶", title: "산책·운동", routine_time: "10:00" },
+  { emoji: "💧", title: "물 마시기", routine_time: "15:00" },
 ];
 
-const getTodayKor = () => {
+const getDateParts = () => {
   const now = new Date();
-  const days = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"];
-  return `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 ${days[now.getDay()]}`;
+  const days = ["일", "월", "화", "수", "목", "금", "토"];
+  return {
+    date: `${now.getMonth() + 1}월 ${now.getDate()}일 (${days[now.getDay()]})`,
+    year: `${now.getFullYear()}년`,
+  };
 };
 
 const getGreeting = () => {
@@ -62,6 +68,17 @@ const formatScheduleTime = (isoStr: string) => {
   return `${month}월 ${day}일 ${ampm} ${h12}시${minute !== "00" ? ` ${minute}분` : ""}`;
 };
 
+const addOneHour = (dateStr: string, timeStr: string): string => {
+  const dt = new Date(`${dateStr}T${timeStr}:00`);
+  dt.setHours(dt.getHours() + 1);
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const min = String(dt.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00`;
+};
+
 const SeniorCarePage = () => {
   const [user, setUser] = useState<{ id: string; email?: string | null } | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
@@ -73,6 +90,7 @@ const SeniorCarePage = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceText, setVoiceText] = useState("");
   const [isParsingVoice, setIsParsingVoice] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState("");
@@ -81,6 +99,7 @@ const SeniorCarePage = () => {
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
+  const { date: todayDate, year: todayYear } = getDateParts();
 
   const fetchSchedules = useCallback(async (userId: string) => {
     try {
@@ -106,19 +125,7 @@ const SeniorCarePage = () => {
       if (rData && rData.length > 0) {
         setHealthChecks(rData as HealthCheck[]);
       } else {
-        const inserts = DEFAULT_HEALTH_CHECKS.map((item, i) => ({
-          user_id: userId,
-          title: item.title,
-          emoji: item.emoji,
-          sort_order: i,
-          routine_time: item.routine_time,
-          routine_end_time: null,
-        }));
-        const { data: inserted } = await supabase
-          .from("routines")
-          .insert(inserts)
-          .select();
-        if (inserted) setHealthChecks(inserted as HealthCheck[]);
+        await insertDefaultHealthChecks(userId);
       }
 
       const { data: lData } = await supabase
@@ -131,6 +138,33 @@ const SeniorCarePage = () => {
       console.error("건강 체크 조회 실패:", e);
     }
   }, [todayStr]);
+
+  const insertDefaultHealthChecks = async (userId: string) => {
+    const inserts = DEFAULT_HEALTH_CHECKS.map((item, i) => ({
+      user_id: userId,
+      title: item.title,
+      emoji: item.emoji,
+      sort_order: i,
+      routine_time: item.routine_time,
+      routine_end_time: null,
+    }));
+    const { data: inserted } = await supabase.from("routines").insert(inserts).select();
+    if (inserted) setHealthChecks(inserted as HealthCheck[]);
+  };
+
+  const handleResetHealthChecks = async () => {
+    if (!user) return;
+    try {
+      await supabase.from("routine_logs").delete().eq("user_id", user.id);
+      await supabase.from("routines").delete().eq("user_id", user.id);
+      setHealthLogs([]);
+      setHealthChecks([]);
+      await insertDefaultHealthChecks(user.id);
+      setShowResetConfirm(false);
+    } catch (e) {
+      console.error("건강 체크 초기화 실패:", e);
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user: u } }) => {
@@ -161,12 +195,15 @@ const SeniorCarePage = () => {
           .from("routine_logs")
           .insert({ routine_id: checkId, user_id: user.id, done_date: todayStr });
         setHealthLogs((prev) => [...prev, { routine_id: checkId, done_date: todayStr }]);
+
+        confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
+
         if ("speechSynthesis" in window) {
           const check = healthChecks.find((c) => c.id === checkId);
           if (check) {
-            const utter = new SpeechSynthesisUtterance(`${check.title} 완료했습니다!`);
+            const utter = new SpeechSynthesisUtterance(`${check.title} 완료!`);
             utter.lang = "ko-KR";
-            utter.rate = 0.9;
+            utter.rate = 0.85;
             window.speechSynthesis.speak(utter);
           }
         }
@@ -178,17 +215,17 @@ const SeniorCarePage = () => {
 
   const handleToggleSchedule = async (schedule: Schedule) => {
     const completing = !schedule.is_completed;
-    await supabase
-      .from("todos")
-      .update({ is_completed: completing })
-      .eq("id", schedule.id);
-    if (user?.id) await fetchSchedules(user.id);
-    if (completing && "speechSynthesis" in window) {
-      const utter = new SpeechSynthesisUtterance(`${schedule.title} 완료했습니다!`);
-      utter.lang = "ko-KR";
-      utter.rate = 0.9;
-      window.speechSynthesis.speak(utter);
+    await supabase.from("todos").update({ is_completed: completing }).eq("id", schedule.id);
+    if (completing) {
+      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+      if ("speechSynthesis" in window) {
+        const utter = new SpeechSynthesisUtterance(`${schedule.title} 완료했습니다!`);
+        utter.lang = "ko-KR";
+        utter.rate = 0.85;
+        window.speechSynthesis.speak(utter);
+      }
     }
+    if (user?.id) await fetchSchedules(user.id);
   };
 
   const handleDeleteSchedule = async (id: string) => {
@@ -269,12 +306,13 @@ const SeniorCarePage = () => {
     }
     setIsSaving(true);
     try {
+      const now = new Date();
       const startDt = newDate && newTime
         ? `${newDate}T${newTime}:00`
-        : new Date().toISOString();
+        : now.toISOString();
       const endDt = newDate && newTime
-        ? `${newDate}T${String(parseInt(newTime.split(":")[0]) + 1).padStart(2, "0")}:${newTime.split(":")[1]}:00`
-        : new Date().toISOString();
+        ? addOneHour(newDate, newTime)
+        : new Date(now.getTime() + 3600000).toISOString();
 
       const { error } = await supabase.from("todos").insert([{
         title: newTitle.trim(),
@@ -284,7 +322,16 @@ const SeniorCarePage = () => {
         user_id: user.id,
         is_completed: false,
       }]);
-      if (error) throw error;
+      if (error) throw new Error(error.message);
+
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
+
+      if ("speechSynthesis" in window) {
+        const utter = new SpeechSynthesisUtterance(`${newTitle.trim()} 일정이 저장되었습니다.`);
+        utter.lang = "ko-KR";
+        utter.rate = 0.85;
+        window.speechSynthesis.speak(utter);
+      }
 
       setNewTitle("");
       setNewDate("");
@@ -292,16 +339,9 @@ const SeniorCarePage = () => {
       setVoiceText("");
       await fetchSchedules(user.id);
       setActiveTab("schedule");
-
-      if ("speechSynthesis" in window) {
-        const utter = new SpeechSynthesisUtterance(`${newTitle.trim()} 일정이 저장되었습니다.`);
-        utter.lang = "ko-KR";
-        utter.rate = 0.9;
-        window.speechSynthesis.speak(utter);
-      }
     } catch (e) {
       console.error("일정 저장 실패:", e);
-      alert("저장 중 오류가 발생했습니다.");
+      alert(`저장에 실패했습니다.\n${e instanceof Error ? e.message : "다시 시도해 주세요."}`);
     } finally {
       setIsSaving(false);
     }
@@ -311,11 +351,6 @@ const SeniorCarePage = () => {
     const d = new Date(s.start_time);
     return d.toISOString().slice(0, 10) === todayStr;
   });
-
-  const upcomingSchedules = schedules.filter((s) => {
-    const d = new Date(s.start_time);
-    return d.toISOString().slice(0, 10) > todayStr;
-  }).slice(0, 5);
 
   const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
   const totalCount = healthChecks.length;
@@ -332,9 +367,9 @@ const SeniorCarePage = () => {
     return (
       <div className="min-h-screen bg-sky-50 flex flex-col items-center justify-center px-6">
         <div className="text-center mb-10">
-          <p className="text-6xl mb-4">🌸</p>
+          <p className="text-7xl mb-4">🌸</p>
           <h1 className="text-4xl font-black text-sky-700 mb-3">어르신 돌봄 플래너</h1>
-          <p className="text-2xl text-slate-500">건강하고 즐거운 하루를 함께해요</p>
+          <p className="text-xl text-slate-500">건강하고 즐거운 하루를 함께해요</p>
         </div>
         <button
           type="button"
@@ -343,34 +378,34 @@ const SeniorCarePage = () => {
         >
           시작하기
         </button>
-        <p className="mt-6 text-xl text-slate-400">처음이신가요?</p>
         <button
           type="button"
           onClick={() => { window.location.href = "/signup"; }}
-          className="mt-2 text-xl font-bold text-sky-600 underline underline-offset-4"
+          className="mt-6 text-xl font-bold text-sky-600 underline underline-offset-4"
         >
-          회원 가입하기
+          처음이신가요? 회원가입
         </button>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-sky-50 flex flex-col max-w-lg mx-auto">
+    <div className="min-h-screen bg-sky-50 flex flex-col" style={{ maxWidth: 480, margin: "0 auto" }}>
 
       {/* 상단 헤더 */}
-      <header className="bg-white px-6 pt-8 pb-5 shadow-sm">
-        <div className="flex justify-between items-start">
+      <header className="bg-white px-5 pt-7 pb-5 shadow-sm">
+        <div className="flex justify-between items-center">
           <div>
-            <p className="text-xl font-bold text-sky-500">{getGreeting()}</p>
-            <p className="text-2xl font-black text-slate-700 mt-1">{getTodayKor()}</p>
+            <p className="text-lg font-bold text-sky-500 leading-tight">{getGreeting()}</p>
+            <p className="text-lg font-bold text-slate-400 leading-tight">{todayYear}</p>
+            <p className="text-3xl font-black text-slate-800 leading-tight mt-0.5">{todayDate}</p>
           </div>
           <button
             type="button"
             onClick={() =>
               supabase.auth.signOut().then(() => { window.location.href = "/login"; })
             }
-            className="bg-slate-100 text-slate-500 text-lg font-bold px-5 py-3 rounded-2xl active:scale-95"
+            className="bg-slate-100 text-slate-500 text-lg font-bold px-5 py-3 rounded-2xl active:scale-95 shrink-0 ml-3"
           >
             나가기
           </button>
@@ -382,26 +417,42 @@ const SeniorCarePage = () => {
 
         {/* ── 홈 탭 ── */}
         {activeTab === "home" && (
-          <div className="px-5 pt-6 space-y-6">
+          <div className="px-4 pt-5 space-y-5">
 
             {/* 오늘 건강 체크 */}
-            <section>
-              <div className="flex items-center justify-between mb-4">
+            <section className="bg-white rounded-[28px] p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-black text-slate-700">오늘의 건강 체크</h2>
-                <span className="text-xl font-bold text-sky-600 bg-sky-100 px-4 py-1.5 rounded-full">
-                  {doneCount}/{totalCount}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl font-bold text-sky-600 bg-sky-100 px-4 py-1.5 rounded-full">
+                    {doneCount}/{totalCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetConfirm(true)}
+                    className="text-sm font-bold text-slate-400 bg-slate-100 px-3 py-2 rounded-xl active:scale-95"
+                    title="항목 초기화"
+                  >
+                    ⚙️
+                  </button>
+                </div>
               </div>
 
               {/* 진행 바 */}
-              <div className="w-full bg-slate-200 rounded-full h-3 mb-5">
+              <div className="w-full bg-slate-100 rounded-full h-4 mb-4">
                 <div
-                  className="bg-sky-400 h-3 rounded-full transition-all duration-500"
+                  className="bg-sky-400 h-4 rounded-full transition-all duration-700"
                   style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {doneCount === totalCount && totalCount > 0 && (
+                <p className="text-center text-xl font-black text-sky-600 mb-3">
+                  🎉 오늘 건강 체크 모두 완료!
+                </p>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
                 {healthChecks.map((check) => {
                   const isDone = healthLogs.some(
                     (l) => l.routine_id === check.id && l.done_date === todayStr
@@ -411,21 +462,21 @@ const SeniorCarePage = () => {
                       key={check.id}
                       type="button"
                       onClick={() => void handleToggleHealth(check.id)}
-                      className={`relative flex flex-col items-center justify-center py-8 rounded-[28px] shadow-sm transition-all active:scale-95 ${
+                      className={`relative flex flex-col items-center justify-center py-7 rounded-[24px] transition-all active:scale-95 select-none ${
                         isDone
-                          ? "bg-sky-500 text-white shadow-sky-200 shadow-lg"
-                          : "bg-white text-slate-600 border-2 border-slate-100"
+                          ? "bg-sky-500 shadow-lg shadow-sky-200"
+                          : "bg-sky-50 border-2 border-sky-100"
                       }`}
                     >
                       {isDone && (
-                        <span className="absolute top-3 right-3 text-2xl">✅</span>
+                        <span className="absolute top-2 right-3 text-xl">✅</span>
                       )}
-                      <span className="text-5xl mb-3">{check.emoji}</span>
-                      <span className={`text-xl font-black text-center leading-tight px-2 ${isDone ? "text-white" : "text-slate-700"}`}>
+                      <span className="text-5xl mb-2">{check.emoji}</span>
+                      <span className={`text-xl font-black text-center leading-tight px-1 ${isDone ? "text-white" : "text-slate-700"}`}>
                         {check.title}
                       </span>
                       {check.routine_time && (
-                        <span className={`text-lg font-bold mt-2 ${isDone ? "text-sky-100" : "text-slate-400"}`}>
+                        <span className={`text-base font-bold mt-1 ${isDone ? "text-sky-100" : "text-slate-400"}`}>
                           {check.routine_time}
                         </span>
                       )}
@@ -437,33 +488,33 @@ const SeniorCarePage = () => {
 
             {/* 오늘 일정 */}
             <section>
-              <h2 className="text-2xl font-black text-slate-700 mb-4">오늘 일정</h2>
+              <h2 className="text-2xl font-black text-slate-700 mb-3 px-1">오늘 일정</h2>
               {todaySchedules.length === 0 ? (
-                <div className="bg-white rounded-[24px] p-8 text-center">
+                <div className="bg-white rounded-[24px] p-8 text-center shadow-sm">
                   <p className="text-5xl mb-3">📅</p>
-                  <p className="text-2xl font-bold text-slate-400">오늘 일정이 없어요</p>
-                  <p className="text-xl text-slate-300 mt-2">아래 + 버튼으로 추가하세요</p>
+                  <p className="text-xl font-bold text-slate-400">오늘 일정이 없어요</p>
+                  <p className="text-lg text-slate-300 mt-1">아래 말하기 버튼으로 추가하세요</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {todaySchedules.map((s) => (
                     <div
                       key={s.id}
-                      className={`bg-white rounded-[24px] p-6 flex items-center gap-4 shadow-sm ${
-                        s.is_completed ? "opacity-50" : ""
+                      className={`bg-white rounded-[24px] p-5 flex items-center gap-4 shadow-sm ${
+                        s.is_completed ? "opacity-60" : ""
                       }`}
                     >
                       <button
                         type="button"
                         onClick={() => void handleToggleSchedule(s)}
-                        className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
+                        className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
                           s.is_completed
                             ? "bg-sky-500 border-sky-500"
                             : "border-slate-300 bg-white"
                         }`}
                       >
                         {s.is_completed && (
-                          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                         )}
@@ -472,7 +523,7 @@ const SeniorCarePage = () => {
                         <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : "text-slate-800"}`}>
                           {s.title}
                         </p>
-                        <p className="text-lg font-bold text-sky-500 mt-1">
+                        <p className="text-lg font-bold text-sky-500 mt-0.5">
                           {formatScheduleTime(s.start_time)}
                         </p>
                       </div>
@@ -486,12 +537,12 @@ const SeniorCarePage = () => {
 
         {/* ── 일정 탭 ── */}
         {activeTab === "schedule" && (
-          <div className="px-5 pt-6 space-y-4">
-            <h2 className="text-2xl font-black text-slate-700 mb-2">전체 일정</h2>
+          <div className="px-4 pt-5 space-y-3">
+            <h2 className="text-2xl font-black text-slate-700 mb-1">전체 일정</h2>
             {schedules.length === 0 ? (
-              <div className="bg-white rounded-[24px] p-10 text-center">
+              <div className="bg-white rounded-[24px] p-10 text-center shadow-sm">
                 <p className="text-5xl mb-3">📋</p>
-                <p className="text-2xl font-bold text-slate-400">등록된 일정이 없어요</p>
+                <p className="text-xl font-bold text-slate-400">등록된 일정이 없어요</p>
               </div>
             ) : (
               schedules.map((s) => {
@@ -499,40 +550,35 @@ const SeniorCarePage = () => {
                 return (
                   <div
                     key={s.id}
-                    className={`bg-white rounded-[24px] p-6 shadow-sm ${isPast ? "border-l-4 border-rose-400" : ""}`}
+                    className={`bg-white rounded-[24px] p-5 shadow-sm ${isPast ? "border-l-4 border-rose-400" : ""}`}
                   >
-                    <div className="flex items-start gap-4">
+                    <div className="flex items-center gap-4">
                       <button
                         type="button"
                         onClick={() => void handleToggleSchedule(s)}
-                        className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center mt-1 transition-all active:scale-90 ${
-                          s.is_completed
-                            ? "bg-sky-500 border-sky-500"
-                            : "border-slate-300 bg-white"
+                        className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
+                          s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
                         }`}
                       >
                         {s.is_completed && (
-                          <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
                         )}
                       </button>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-2xl font-black ${s.is_completed ? "line-through text-slate-300" : isPast ? "text-rose-500" : "text-slate-800"}`}>
+                        <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : isPast ? "text-rose-500" : "text-slate-800"}`}>
                           {s.title}
                         </p>
-                        {s.description && (
-                          <p className="text-lg text-slate-400 mt-1">{s.description}</p>
-                        )}
-                        <p className={`text-lg font-bold mt-1 ${isPast ? "text-rose-400" : "text-sky-500"}`}>
+                        <p className={`text-lg font-bold mt-0.5 ${isPast && !s.is_completed ? "text-rose-400" : "text-sky-500"}`}>
                           {formatScheduleTime(s.start_time)}
-                          {isPast && " ⚠️ 지난 일정"}
+                          {isPast && !s.is_completed && " ⚠️"}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => void handleDeleteSchedule(s.id)}
-                        className="w-12 h-12 flex items-center justify-center text-3xl text-slate-200 hover:text-rose-400 active:scale-90 transition-all flex-shrink-0"
+                        className="w-12 h-12 flex items-center justify-center text-2xl text-slate-300 active:text-rose-400 active:scale-90 transition-all flex-shrink-0"
                       >
                         🗑️
                       </button>
@@ -541,84 +587,69 @@ const SeniorCarePage = () => {
                 );
               })
             )}
-
-            {upcomingSchedules.length > 0 && (
-              <div className="mt-4">
-                <h3 className="text-xl font-black text-slate-500 mb-3 px-1">다가오는 일정</h3>
-              </div>
-            )}
           </div>
         )}
 
         {/* ── 일정 추가 탭 ── */}
         {activeTab === "add" && (
-          <div className="px-5 pt-6 space-y-5">
+          <div className="px-4 pt-5 space-y-4">
             <h2 className="text-2xl font-black text-slate-700">일정 추가</h2>
 
-            {/* 음성 인식 결과 표시 */}
             {voiceText && (
               <div className="bg-sky-50 border-2 border-sky-200 rounded-[24px] p-5">
                 <p className="text-lg font-bold text-sky-600 mb-1">🎤 말씀하신 내용</p>
                 <p className="text-xl font-bold text-slate-700">&ldquo;{voiceText}&rdquo;</p>
                 {isParsingVoice && (
-                  <p className="text-lg text-sky-400 mt-2 animate-pulse">AI가 날짜·시간을 분석 중...</p>
+                  <p className="text-lg text-sky-400 mt-2 animate-pulse">날짜·시간 분석 중...</p>
                 )}
               </div>
             )}
 
-            {/* 일정 제목 */}
-            <div className="bg-white rounded-[24px] p-5 shadow-sm">
-              <label className="block text-xl font-black text-slate-600 mb-3">
-                📝 일정 이름
-              </label>
-              <input
-                className="w-full bg-sky-50 rounded-2xl px-5 py-5 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300 placeholder:text-slate-300"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="예: 병원 진료, 복지관 프로그램"
-              />
+            <div className="bg-white rounded-[24px] p-5 shadow-sm space-y-4">
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">📝 일정 이름</label>
+                <input
+                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300 placeholder:text-slate-300"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="예: 병원 진료, 복지관"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
+                <input
+                  type="date"
+                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={newDate}
+                  onChange={(e) => setNewDate(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
+                <input
+                  type="time"
+                  className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                  value={newTime}
+                  onChange={(e) => setNewTime(e.target.value)}
+                />
+              </div>
             </div>
 
-            {/* 날짜 선택 */}
-            <div className="bg-white rounded-[24px] p-5 shadow-sm">
-              <label className="block text-xl font-black text-slate-600 mb-3">
-                📅 날짜
-              </label>
-              <input
-                type="date"
-                className="w-full bg-sky-50 rounded-2xl px-5 py-5 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-              />
-            </div>
-
-            {/* 시간 선택 */}
-            <div className="bg-white rounded-[24px] p-5 shadow-sm">
-              <label className="block text-xl font-black text-slate-600 mb-3">
-                ⏰ 시간
-              </label>
-              <input
-                type="time"
-                className="w-full bg-sky-50 rounded-2xl px-5 py-5 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
-                value={newTime}
-                onChange={(e) => setNewTime(e.target.value)}
-              />
-            </div>
-
-            {/* 저장 버튼 */}
             <button
               type="button"
               onClick={() => void handleSaveSchedule()}
               disabled={!newTitle.trim() || isSaving}
-              className="w-full bg-sky-500 text-white text-3xl font-black py-8 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full bg-sky-500 text-white text-3xl font-black py-7 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40"
             >
-              {isSaving ? "저장 중..." : "일정 저장하기 ✅"}
+              {isSaving ? "저장 중..." : "일정 저장 ✅"}
             </button>
 
             <button
               type="button"
               onClick={() => { setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText(""); }}
-              className="w-full bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95 transition-all"
+              className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95 transition-all"
             >
               다시 입력하기
             </button>
@@ -627,54 +658,66 @@ const SeniorCarePage = () => {
 
       </main>
 
-      {/* 하단 네비게이션 */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-slate-100 shadow-2xl">
-        <div className="flex items-center justify-around px-4 py-3">
+      {/* 건강 체크 초기화 확인 모달 */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-6">
+          <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
+            <p className="text-2xl font-black text-slate-800 mb-2">건강 체크 초기화</p>
+            <p className="text-lg text-slate-500 mb-6 leading-relaxed">
+              기존 항목을 모두 지우고<br />어르신 기본 항목으로 바꿀까요?<br />
+              <span className="text-sky-600 font-bold">(혈압약, 당뇨약, 혈압측정, 식사, 산책, 물 마시기)</span>
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => void handleResetHealthChecks()}
+                className="flex-1 bg-sky-500 text-white text-xl font-black py-5 rounded-2xl active:scale-95"
+              >
+                네, 바꿀게요
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-2xl active:scale-95"
+              >
+                아니요
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-          {/* 홈 버튼 */}
+      {/* 하단 네비게이션 */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 shadow-2xl" style={{ maxWidth: 480, margin: "0 auto" }}>
+        <div className="flex items-center justify-around px-4 py-3">
           <button
             type="button"
             onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${
-              activeTab === "home" ? "bg-sky-50" : ""
-            }`}
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "home" ? "bg-sky-50" : ""}`}
           >
             <span className="text-4xl">🏠</span>
-            <span className={`text-lg font-black ${activeTab === "home" ? "text-sky-600" : "text-slate-400"}`}>
-              홈
-            </span>
+            <span className={`text-lg font-black ${activeTab === "home" ? "text-sky-600" : "text-slate-400"}`}>홈</span>
           </button>
 
-          {/* 말하기 버튼 (가운데 크게) */}
           <button
             type="button"
             onClick={handleVoiceInput}
             className={`flex flex-col items-center justify-center w-24 h-24 rounded-full shadow-2xl transition-all active:scale-95 -mt-8 ${
-              isListening
-                ? "bg-rose-500 animate-pulse shadow-rose-300"
-                : "bg-sky-500 shadow-sky-300"
+              isListening ? "bg-rose-500 animate-pulse shadow-rose-300" : "bg-sky-500 shadow-sky-200"
             }`}
           >
-            <span className="text-5xl">{isListening ? "🛑" : "🎤"}</span>
-            <span className="text-base font-black text-white mt-0.5">
-              {isListening ? "멈추기" : "말하기"}
-            </span>
+            <span className="text-4xl">{isListening ? "🛑" : "🎤"}</span>
+            <span className="text-base font-black text-white">{isListening ? "멈추기" : "말하기"}</span>
           </button>
 
-          {/* 일정 버튼 */}
           <button
             type="button"
             onClick={() => setActiveTab("schedule")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${
-              activeTab === "schedule" ? "bg-sky-50" : ""
-            }`}
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "schedule" ? "bg-sky-50" : ""}`}
           >
             <span className="text-4xl">📋</span>
-            <span className={`text-lg font-black ${activeTab === "schedule" ? "text-sky-600" : "text-slate-400"}`}>
-              일정
-            </span>
+            <span className={`text-lg font-black ${activeTab === "schedule" ? "text-sky-600" : "text-slate-400"}`}>일정</span>
           </button>
-
         </div>
       </nav>
 
