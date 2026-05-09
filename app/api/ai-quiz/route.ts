@@ -37,7 +37,7 @@ export const GET = async (req: NextRequest) => {
     const { text } = await generateText({
       model: groq("llama-3.3-70b-versatile"),
       prompt,
-      maxTokens: 400,
+      maxOutputTokens: 400,
     });
 
     // JSON 블록 파싱 (마크다운 코드펜스 제거)
