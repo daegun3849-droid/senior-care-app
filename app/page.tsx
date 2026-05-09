@@ -191,6 +191,11 @@ const WelfareCenterCarePage = () => {
   // 월간 달력 상태
   const [monthlyLogs, setMonthlyLogs] = useState<Record<string, number>>({});
   const [totalRoutineCount, setTotalRoutineCount] = useState(0);
+  // 달력 날짜 클릭 → 일정 추가 모달
+  const [calendarDate, setCalendarDate] = useState<string | null>(null);
+  const [calendarTitle, setCalendarTitle] = useState("");
+  const [calendarStartTime, setCalendarStartTime] = useState("09:00");
+  const [calendarEndTime, setCalendarEndTime] = useState("10:00");
 
   // 일일 퀴즈 상태
   const [quiz, setQuiz] = useState<DailyQuiz | null>(null);
@@ -254,15 +259,30 @@ const WelfareCenterCarePage = () => {
         .order("sort_order", { ascending: true });
 
       if (rData && rData.length > 0) {
-        setHealthChecks(rData as HealthCheck[]);
-        // 중복 항목 감지 (같은 title이 2개 이상) 또는 구버전 항목
-        const titleCounts = (rData as HealthCheck[]).reduce<Record<string, number>>((acc, r) => {
-          acc[r.title] = (acc[r.title] ?? 0) + 1;
-          return acc;
-        }, {});
-        const hasDuplicates = Object.values(titleCounts).some((n) => n > 1);
         const isOldStyle = (rData as HealthCheck[]).every((r) => !HEALTH_EMOJIS.has(r.emoji));
-        if (isOldStyle || hasDuplicates) setShowResetBanner(true);
+        if (isOldStyle) {
+          // 구버전 → 배너 표시
+          setHealthChecks(rData as HealthCheck[]);
+          setShowResetBanner(true);
+        } else {
+          // 중복 자동 제거: 같은 title 중 첫 번째만 유지, 나머지 DB에서 삭제
+          const seen = new Set<string>();
+          const toDelete: string[] = [];
+          const cleaned: HealthCheck[] = [];
+          for (const r of rData as HealthCheck[]) {
+            if (seen.has(r.title)) {
+              toDelete.push(r.id);
+            } else {
+              seen.add(r.title);
+              cleaned.push(r);
+            }
+          }
+          if (toDelete.length > 0) {
+            await supabase.from("routine_logs").delete().in("routine_id", toDelete);
+            await supabase.from("routines").delete().in("id", toDelete);
+          }
+          setHealthChecks(cleaned);
+        }
       } else {
         await insertDefaultHealthChecks(userId);
       }
@@ -293,6 +313,25 @@ const WelfareCenterCarePage = () => {
       console.error("건강 체크 초기화 실패:", e);
     }
   }, [user, insertDefaultHealthChecks]);
+
+  const fetchMonthlyLogs = useCallback(async (userId: string) => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const [{ data: logs }, { data: routines }] = await Promise.all([
+      supabase.from("routine_logs").select("done_date")
+        .eq("user_id", userId).gte("done_date", firstDay).lte("done_date", lastDay),
+      supabase.from("routines").select("id").eq("user_id", userId),
+    ]);
+    const total = routines?.length ?? 0;
+    setTotalRoutineCount(total);
+    const counts: Record<string, number> = {};
+    for (const log of logs ?? []) {
+      const d = log.done_date as string;
+      counts[d] = (counts[d] ?? 0) + 1;
+    }
+    setMonthlyLogs(counts);
+  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user: u } }) => {
@@ -379,24 +418,27 @@ const WelfareCenterCarePage = () => {
     if (user?.id) await fetchSchedules(user.id);
   };
 
-  const fetchMonthlyLogs = useCallback(async (userId: string) => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-    const [{ data: logs }, { data: routines }] = await Promise.all([
-      supabase.from("routine_logs").select("done_date")
-        .eq("user_id", userId).gte("done_date", firstDay).lte("done_date", lastDay),
-      supabase.from("routines").select("id").eq("user_id", userId),
-    ]);
-    const total = routines?.length ?? 0;
-    setTotalRoutineCount(total);
-    const counts: Record<string, number> = {};
-    for (const log of logs ?? []) {
-      const d = log.done_date as string;
-      counts[d] = (counts[d] ?? 0) + 1;
+  const handleCalendarScheduleSave = async () => {
+    if (!calendarTitle.trim() || !user?.id || !calendarDate) return;
+    const start = new Date(`${calendarDate}T${calendarStartTime}:00+09:00`).toISOString();
+    const end   = new Date(`${calendarDate}T${calendarEndTime}:00+09:00`).toISOString();
+    try {
+      await supabase.from("todos").insert({
+        user_id: user.id,
+        content: calendarTitle.trim(),
+        start_time: start,
+        end_time: end,
+        is_completed: false,
+      });
+      await fetchSchedules(user.id);
+      setCalendarDate(null);
+      setCalendarTitle("");
+      setCalendarStartTime("09:00");
+      setCalendarEndTime("10:00");
+    } catch (e) {
+      console.error("달력 일정 저장 실패:", e);
     }
-    setMonthlyLogs(counts);
-  }, []);
+  };
 
   const fetchQuiz = useCallback(async () => {
     // 오늘 이미 불러왔으면 재요청 안 함
@@ -1012,10 +1054,19 @@ const WelfareCenterCarePage = () => {
                       else if (pct >= 0.4) bg = "bg-emerald-200 text-emerald-900";
                       else if (pct > 0)    bg = "bg-emerald-100 text-emerald-700";
                       cells.push(
-                        <div key={key}
-                          className={`aspect-square rounded-xl flex items-center justify-center text-base font-black ${bg} ${isToday ? "ring-2 ring-amber-400" : ""}`}>
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => {
+                            setCalendarDate(key);
+                            setCalendarTitle("");
+                            setCalendarStartTime("09:00");
+                            setCalendarEndTime("10:00");
+                          }}
+                          className={`aspect-square rounded-xl flex items-center justify-center text-base font-black active:scale-90 transition-all ${bg} ${isToday ? "ring-2 ring-amber-400" : ""}`}
+                        >
                           {d}
-                        </div>
+                        </button>
                       );
                     }
                     return cells;
@@ -1197,6 +1248,68 @@ const WelfareCenterCarePage = () => {
               </button>
               <button type="button" onClick={() => setEditingSchedule(null)}
                 className="flex-1 bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 달력 날짜 클릭 → 일정 추가 모달 ── */}
+      {calendarDate && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
+          <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
+            <p className="text-2xl font-black text-stone-900 mb-1">일정 추가</p>
+            <p className="text-lg font-bold text-emerald-700 mb-5">
+              📅 {calendarDate.replace(/-/g, ".")}
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-lg font-black text-stone-700 mb-2">일정 내용</label>
+                <input
+                  type="text"
+                  value={calendarTitle}
+                  onChange={(e) => setCalendarTitle(e.target.value)}
+                  placeholder="예: 물리치료, 노래교실"
+                  className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500 placeholder:text-stone-400"
+                  autoFocus
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-base font-black text-stone-700 mb-2">시작 시간</label>
+                  <input
+                    type="time"
+                    value={calendarStartTime}
+                    onChange={(e) => setCalendarStartTime(e.target.value)}
+                    className="w-full bg-stone-50 rounded-2xl px-3 py-3 text-xl font-black text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-base font-black text-stone-700 mb-2">종료 시간</label>
+                  <input
+                    type="time"
+                    value={calendarEndTime}
+                    onChange={(e) => setCalendarEndTime(e.target.value)}
+                    className="w-full bg-stone-50 rounded-2xl px-3 py-3 text-xl font-black text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => void handleCalendarScheduleSave()}
+                disabled={!calendarTitle.trim()}
+                className="flex-1 bg-emerald-800 text-white text-xl font-black py-5 rounded-2xl active:scale-95 disabled:opacity-40"
+              >
+                저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setCalendarDate(null)}
+                className="flex-1 bg-stone-100 text-stone-500 text-xl font-bold py-5 rounded-2xl active:scale-95"
+              >
                 취소
               </button>
             </div>

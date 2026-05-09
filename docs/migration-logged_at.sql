@@ -1,27 +1,24 @@
 -- ================================================================
--- 마이그레이션: routine_logs 테이블에 logged_at 컬럼 추가
--- 목적: 같은 날 동일 루틴을 여러 번 체크할 수 있도록 지원
---        (예: 혈압약 아침/저녁, 물 마시기 5회 각각 기록)
--- Supabase Dashboard > SQL Editor 에서 실행하세요
+-- 마이그레이션: 다중 로그 지원을 위한 routine_logs 테이블 수정
+-- Supabase Dashboard > SQL Editor 에 아래 내용을 붙여넣고 Run 클릭
 -- ================================================================
 
--- 1. logged_at 컬럼 추가 (없으면 추가)
-ALTER TABLE routine_logs
+-- 1. unique 제약 제거 (같은 날 같은 루틴을 여러 번 체크 가능하게)
+ALTER TABLE public.routine_logs
+  DROP CONSTRAINT IF EXISTS routine_logs_routine_id_done_date_key;
+
+-- 2. logged_at 컬럼 추가 (체크한 실제 시각 기록)
+ALTER TABLE public.routine_logs
   ADD COLUMN IF NOT EXISTS logged_at timestamptz DEFAULT now();
 
--- 2. 기존 레코드 logged_at 채우기 (NULL 방지)
-UPDATE routine_logs
-  SET logged_at = now()
+-- 3. 기존 레코드 logged_at 채우기 (NULL 방지)
+UPDATE public.routine_logs
+  SET logged_at = created_at
   WHERE logged_at IS NULL;
 
--- 3. 기존 PK 제약 확인 및 다중 로그 지원을 위한 UNIQUE 완화
---    (routine_id + done_date 조합의 UNIQUE 제약이 있다면 제거)
---    아래는 제약명 확인 후 필요 시 실행:
--- ALTER TABLE routine_logs DROP CONSTRAINT IF EXISTS routine_logs_routine_id_done_date_key;
-
--- 4. 인덱스 추가 (조회 성능)
+-- 4. 조회 성능을 위한 인덱스 추가
 CREATE INDEX IF NOT EXISTS idx_routine_logs_routine_date
-  ON routine_logs (routine_id, done_date);
+  ON public.routine_logs (routine_id, done_date);
 
 CREATE INDEX IF NOT EXISTS idx_routine_logs_user_date
-  ON routine_logs (user_id, done_date);
+  ON public.routine_logs (user_id, done_date);
