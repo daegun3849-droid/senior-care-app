@@ -1,9 +1,11 @@
 ---
-description: AI 할 일 관리 웹 서비스 개발 규칙
+description: 노인복지관 어르신 돌봄(시니어) 앱 개발 규칙 · AI 할 일 매니저는 별도 폴더/DB
 alwaysApply: true
 ---
 
-# AI 할 일 관리 웹 서비스 개발 규칙
+**이 저장소:** 노인복지관 어르신 돌봄(시니어 케어) — 사용자는 AI 할 일 매니저를 **다른 폴더·다른 Supabase**로 두고 있음. `dual-projects-context.mdc`와 함께 참고.
+
+# 노인복지관 어르신 돌봄 — 개발 규칙
 
 ## 기술 스택
 
