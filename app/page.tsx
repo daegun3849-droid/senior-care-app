@@ -177,6 +177,12 @@ const WelfareCenterCarePage = () => {
   const [editingCheckId, setEditingCheckId] = useState<string | null>(null);
   const [editingCheckTime, setEditingCheckTime] = useState("");
 
+  // 건강체크 항목 추가 상태
+  const [showAddCheck, setShowAddCheck] = useState(false);
+  const [newCheckEmoji, setNewCheckEmoji] = useState("💊");
+  const [newCheckTitle, setNewCheckTitle] = useState("");
+  const [newCheckTime, setNewCheckTime] = useState("09:00");
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const { date: todayDate, year: todayYear } = getDateParts();
@@ -203,6 +209,9 @@ const WelfareCenterCarePage = () => {
   }, []);
 
   const insertDefaultHealthChecks = useCallback(async (userId: string) => {
+    // 기존 항목 완전 삭제 후 삽입 (중복 방지)
+    await supabase.from("routine_logs").delete().eq("user_id", userId);
+    await supabase.from("routines").delete().eq("user_id", userId);
     const inserts = DEFAULT_HEALTH_CHECKS.map((item, i) => ({
       user_id: userId,
       title: item.title,
@@ -225,8 +234,14 @@ const WelfareCenterCarePage = () => {
 
       if (rData && rData.length > 0) {
         setHealthChecks(rData as HealthCheck[]);
+        // 중복 항목 감지 (같은 title이 2개 이상) 또는 구버전 항목
+        const titleCounts = (rData as HealthCheck[]).reduce<Record<string, number>>((acc, r) => {
+          acc[r.title] = (acc[r.title] ?? 0) + 1;
+          return acc;
+        }, {});
+        const hasDuplicates = Object.values(titleCounts).some((n) => n > 1);
         const isOldStyle = (rData as HealthCheck[]).every((r) => !HEALTH_EMOJIS.has(r.emoji));
-        if (isOldStyle) setShowResetBanner(true);
+        if (isOldStyle || hasDuplicates) setShowResetBanner(true);
       } else {
         await insertDefaultHealthChecks(userId);
       }
@@ -311,6 +326,35 @@ const WelfareCenterCarePage = () => {
     if (!confirm("이 일정을 지울까요?")) return;
     await supabase.from("todos").delete().eq("id", id);
     if (user?.id) await fetchSchedules(user.id);
+  };
+
+  const handleAddCheck = async () => {
+    if (!newCheckTitle.trim() || !user?.id) return;
+    const maxOrder = healthChecks.reduce((m, c) => Math.max(m, c.sort_order), -1);
+    const { data: inserted } = await supabase
+      .from("routines")
+      .insert([{
+        user_id: user.id,
+        title: newCheckTitle.trim(),
+        emoji: newCheckEmoji,
+        sort_order: maxOrder + 1,
+        routine_time: newCheckTime,
+        routine_end_time: null,
+      }])
+      .select();
+    if (inserted) setHealthChecks((prev) => [...prev, ...(inserted as HealthCheck[])]);
+    setNewCheckTitle("");
+    setNewCheckEmoji("💊");
+    setNewCheckTime("09:00");
+    setShowAddCheck(false);
+  };
+
+  const handleDeleteCheck = async (id: string) => {
+    if (!confirm("이 항목을 삭제할까요?")) return;
+    await supabase.from("routine_logs").delete().eq("routine_id", id);
+    await supabase.from("routines").delete().eq("id", id);
+    setHealthChecks((prev) => prev.filter((c) => c.id !== id));
+    setHealthLogs((prev) => prev.filter((l) => l.routine_id !== id));
   };
 
   const handleOpenCheckEdit = (check: HealthCheck) => {
@@ -579,9 +623,9 @@ const WelfareCenterCarePage = () => {
             {/* 구버전 항목 감지 배너 */}
             {showResetBanner && (
               <div className="bg-amber-50 border-2 border-amber-300 rounded-[24px] p-5">
-                <p className="text-xl font-black text-amber-900 mb-1">복지관 맞춤으로 바꾸기</p>
+                <p className="text-xl font-black text-amber-900 mb-1">항목이 중복되거나 예전 항목이에요</p>
                 <p className="text-lg text-amber-800 leading-relaxed mb-4">
-                  예전 항목만 있어요.<br />복지관에서 쓰기 좋은 건강·복약 항목으로 바꿀까요?
+                  기존 항목을 지우고 새 항목으로 바꿀까요?<br />(혈압약·식사·혈압 측정 등 23개)
                 </p>
                 <div className="flex gap-3">
                   <button type="button" onClick={() => void handleResetHealthChecks()}
@@ -604,6 +648,10 @@ const WelfareCenterCarePage = () => {
                   <span className="text-xl font-bold text-emerald-800 bg-emerald-100 px-4 py-1.5 rounded-full">
                     {doneCount}/{totalCount}
                   </span>
+                  <button type="button" onClick={() => setShowAddCheck(true)}
+                    className="text-xl font-black text-emerald-800 bg-emerald-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95">
+                    +
+                  </button>
                   <button type="button" onClick={() => setShowResetConfirm(true)}
                     className="text-xl text-slate-400 bg-slate-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95">
                     ⚙️
@@ -673,20 +721,31 @@ const WelfareCenterCarePage = () => {
                                 {check.title}
                               </span>
 
-                              {/* 시간 + 수정 버튼 */}
+                              {/* 시간 + 수정/삭제 버튼 */}
                               <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                 <span className={`text-base font-bold ${isDone ? "text-emerald-100" : "text-stone-500"}`}>
                                   {check.routine_time ?? ""}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenCheckEdit(check)}
-                                  className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
-                                    isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
-                                  }`}
-                                >
-                                  시간 수정
-                                </button>
+                                <div className="flex gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenCheckEdit(check)}
+                                    className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
+                                      isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
+                                    }`}
+                                  >
+                                    시간
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteCheck(check.id)}
+                                    className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
+                                      isDone ? "bg-white/20 text-white" : "bg-red-100 text-red-500"
+                                    }`}
+                                  >
+                                    삭제
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -863,6 +922,63 @@ const WelfareCenterCarePage = () => {
               </button>
               <button type="button" onClick={() => setEditingSchedule(null)}
                 className="flex-1 bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 건강체크 항목 추가 모달 ── */}
+      {showAddCheck && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
+          <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
+            <p className="text-2xl font-black text-stone-900 mb-5">항목 추가</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-lg font-black text-stone-700 mb-2">이모지</label>
+                <input
+                  type="text"
+                  value={newCheckEmoji}
+                  onChange={(e) => setNewCheckEmoji(e.target.value)}
+                  maxLength={2}
+                  className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-3xl text-center outline-none border-2 border-stone-200 focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-lg font-black text-stone-700 mb-2">항목 이름</label>
+                <input
+                  type="text"
+                  value={newCheckTitle}
+                  onChange={(e) => setNewCheckTitle(e.target.value)}
+                  placeholder="예: 비타민 복용"
+                  className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500 placeholder:text-stone-400"
+                />
+              </div>
+              <div>
+                <label className="block text-lg font-black text-stone-700 mb-2">시간</label>
+                <input
+                  type="time"
+                  value={newCheckTime}
+                  onChange={(e) => setNewCheckTime(e.target.value)}
+                  className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-black text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => void handleAddCheck()}
+                disabled={!newCheckTitle.trim()}
+                className="flex-1 bg-emerald-800 text-white text-xl font-black py-5 rounded-2xl active:scale-95 disabled:opacity-40"
+              >
+                추가
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddCheck(false)}
+                className="flex-1 bg-stone-100 text-stone-500 text-xl font-bold py-5 rounded-2xl active:scale-95"
+              >
                 취소
               </button>
             </div>
