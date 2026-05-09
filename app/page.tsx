@@ -40,16 +40,53 @@ interface FamilyContact {
 
 const CONTACTS_KEY = "senior-family-contacts-v1";
 
-const HEALTH_EMOJIS = new Set(["💊", "🩸", "🩺", "🍚", "🚶", "💧", "🏥", "🩻", "🫀", "💉", "🏛️", "🤝", "🧘"]);
+const HEALTH_EMOJIS = new Set([
+  "💊","🩸","🩺","🍚","🍱","🍲","🚶","💧","🏥","🩻","🫀","💉",
+  "🏛️","🤝","🧘","🛌","🪥","🛁","😊","📞","🦯","🧠",
+]);
+
+// sort_order 범위로 카테고리 파악
+const CATEGORY_RANGES: { label: string; from: number; to: number }[] = [
+  { label: "💊 복약",     from:  0, to:  2 },
+  { label: "🍽️ 식사",     from:  3, to:  5 },
+  { label: "🩺 활력징후", from:  6, to:  9 },
+  { label: "💧 수분 섭취", from: 10, to: 14 },
+  { label: "🚶 활동",     from: 15, to: 17 },
+  { label: "🪥 위생",     from: 18, to: 20 },
+  { label: "💛 기타",     from: 21, to: 99 },
+];
 
 const DEFAULT_HEALTH_CHECKS = [
-  { emoji: "💊", title: "혈압약 복용", routine_time: "08:00" },
-  { emoji: "🩸", title: "당뇨약 복용", routine_time: "08:30" },
-  { emoji: "🩺", title: "혈압·혈당 체크", routine_time: "09:00" },
-  { emoji: "🏛️", title: "복지관 프로그램", routine_time: "10:00" },
-  { emoji: "🍚", title: "따뜻한 식사", routine_time: "12:00" },
-  { emoji: "🚶", title: "실내·외 걷기", routine_time: "14:00" },
-  { emoji: "💧", title: "물 마시기", routine_time: "15:00" },
+  // ── 복약 (0~2)
+  { emoji: "💊", title: "혈압약",      routine_time: "08:00" },
+  { emoji: "💊", title: "당뇨약",      routine_time: "08:30" },
+  { emoji: "💊", title: "취침 전 약",  routine_time: "21:00" },
+  // ── 식사 (3~5)
+  { emoji: "🍚", title: "아침 식사",   routine_time: "08:00" },
+  { emoji: "🍱", title: "점심 식사",   routine_time: "12:00" },
+  { emoji: "🍲", title: "저녁 식사",   routine_time: "18:00" },
+  // ── 활력징후 (6~9)
+  { emoji: "🩺", title: "혈압 측정(아침)",  routine_time: "07:30" },
+  { emoji: "🩺", title: "혈압 측정(오후)",  routine_time: "14:00" },
+  { emoji: "🩺", title: "혈압 측정(저녁)",  routine_time: "20:00" },
+  { emoji: "🩸", title: "혈당 측정",         routine_time: "08:00" },
+  // ── 수분 (10~14)
+  { emoji: "💧", title: "물 마시기(오전1)", routine_time: "09:00" },
+  { emoji: "💧", title: "물 마시기(오전2)", routine_time: "11:00" },
+  { emoji: "💧", title: "물 마시기(오후1)", routine_time: "14:00" },
+  { emoji: "💧", title: "물 마시기(오후2)", routine_time: "16:00" },
+  { emoji: "💧", title: "물 마시기(저녁)",  routine_time: "19:00" },
+  // ── 활동 (15~17)
+  { emoji: "🚶", title: "산책·걷기",    routine_time: "10:00" },
+  { emoji: "🧘", title: "체조·재활",    routine_time: "14:30" },
+  { emoji: "🛌", title: "낮잠·휴식",    routine_time: "13:30" },
+  // ── 위생 (18~20)
+  { emoji: "🪥", title: "양치질(아침)", routine_time: "08:30" },
+  { emoji: "🪥", title: "양치질(저녁)", routine_time: "21:00" },
+  { emoji: "🛁", title: "세수·씻기",    routine_time: "07:00" },
+  // ── 기타 (21~)
+  { emoji: "😊", title: "기분·컨디션", routine_time: "09:00" },
+  { emoji: "📞", title: "가족 통화",    routine_time: "19:00" },
 ];
 
 const getDateParts = () => {
@@ -135,6 +172,10 @@ const WelfareCenterCarePage = () => {
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [isEditSaving, setIsEditSaving] = useState(false);
+
+  // 건강체크 시간 수정 상태
+  const [editingCheckId, setEditingCheckId] = useState<string | null>(null);
+  const [editingCheckTime, setEditingCheckTime] = useState("");
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -270,6 +311,31 @@ const WelfareCenterCarePage = () => {
     if (!confirm("이 일정을 지울까요?")) return;
     await supabase.from("todos").delete().eq("id", id);
     if (user?.id) await fetchSchedules(user.id);
+  };
+
+  const handleOpenCheckEdit = (check: HealthCheck) => {
+    setEditingCheckId(check.id);
+    setEditingCheckTime(check.routine_time ?? "");
+  };
+
+  const handleCheckTimeSave = async () => {
+    if (!editingCheckId) return;
+    try {
+      await supabase
+        .from("routines")
+        .update({ routine_time: editingCheckTime })
+        .eq("id", editingCheckId);
+      setHealthChecks((prev) =>
+        prev.map((c) =>
+          c.id === editingCheckId ? { ...c, routine_time: editingCheckTime } : c,
+        ),
+      );
+    } catch (e) {
+      console.error("시간 수정 실패:", e);
+    } finally {
+      setEditingCheckId(null);
+      setEditingCheckTime("");
+    }
   };
 
   const handleOpenEdit = (s: Schedule) => {
@@ -530,7 +596,7 @@ const WelfareCenterCarePage = () => {
               </div>
             )}
 
-            {/* 오늘 건강 체크 */}
+            {/* 오늘 건강·복약 체크 */}
             <section className="bg-white rounded-[28px] p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-black text-stone-800">오늘 건강·복약</h2>
@@ -545,6 +611,7 @@ const WelfareCenterCarePage = () => {
                 </div>
               </div>
 
+              {/* 진행 바 */}
               <div className="w-full bg-slate-100 rounded-full h-4 mb-4">
                 <div className="bg-emerald-600 h-4 rounded-full transition-all duration-700"
                   style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }} />
@@ -560,25 +627,72 @@ const WelfareCenterCarePage = () => {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
-                {healthChecks.map((check) => {
-                  const isDone = healthLogs.some((l) => l.routine_id === check.id && l.done_date === todayStr);
+              {/* 카테고리별 리스트 */}
+              <div className="space-y-4">
+                {CATEGORY_RANGES.map((cat) => {
+                  const items = healthChecks.filter(
+                    (c) => c.sort_order >= cat.from && c.sort_order <= cat.to,
+                  );
+                  if (items.length === 0) return null;
                   return (
-                    <button key={check.id} type="button" onClick={() => void handleToggleHealth(check.id)}
-                      className={`relative flex flex-col items-center justify-center py-7 rounded-[24px] transition-all active:scale-95 select-none ${
-                        isDone ? "bg-emerald-700 shadow-lg shadow-emerald-200" : "bg-emerald-50 border-2 border-emerald-100"
-                      }`}>
-                      {isDone && <span className="absolute top-2 right-3 text-xl">✅</span>}
-                      <span className="text-5xl mb-2">{check.emoji}</span>
-                      <span className={`text-xl font-black text-center leading-tight px-1 ${isDone ? "text-white" : "text-slate-700"}`}>
-                        {check.title}
-                      </span>
-                      {check.routine_time && (
-                        <span className={`text-base font-bold mt-1 ${isDone ? "text-emerald-100" : "text-slate-400"}`}>
-                          {check.routine_time}
-                        </span>
-                      )}
-                    </button>
+                    <div key={cat.label}>
+                      <p className="text-base font-black text-stone-500 mb-2 px-1">{cat.label}</p>
+                      <div className="space-y-2">
+                        {items.map((check) => {
+                          const isDone = healthLogs.some(
+                            (l) => l.routine_id === check.id && l.done_date === todayStr,
+                          );
+                          return (
+                            <div
+                              key={check.id}
+                              className={`flex items-center gap-3 rounded-2xl px-4 py-3 transition-all ${
+                                isDone ? "bg-emerald-700" : "bg-stone-50 border border-stone-200"
+                              }`}
+                            >
+                              {/* 마침 버튼 */}
+                              <button
+                                type="button"
+                                onClick={() => void handleToggleHealth(check.id)}
+                                className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center active:scale-90 transition-all ${
+                                  isDone
+                                    ? "bg-white border-white"
+                                    : "border-stone-300 bg-white"
+                                }`}
+                                aria-label={isDone ? "완료 취소" : "마침"}
+                              >
+                                {isDone ? (
+                                  <svg className="w-6 h-6 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                  </svg>
+                                ) : null}
+                              </button>
+
+                              {/* 이모지 + 이름 */}
+                              <span className="text-2xl flex-shrink-0">{check.emoji}</span>
+                              <span className={`text-xl font-black flex-1 leading-tight ${isDone ? "text-white" : "text-stone-800"}`}>
+                                {check.title}
+                              </span>
+
+                              {/* 시간 + 수정 버튼 */}
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                <span className={`text-base font-bold ${isDone ? "text-emerald-100" : "text-stone-500"}`}>
+                                  {check.routine_time ?? ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCheckEdit(check)}
+                                  className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
+                                    isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
+                                  }`}
+                                >
+                                  시간 수정
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -749,6 +863,41 @@ const WelfareCenterCarePage = () => {
               </button>
               <button type="button" onClick={() => setEditingSchedule(null)}
                 className="flex-1 bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 건강체크 시간 수정 모달 ── */}
+      {editingCheckId && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-6">
+          <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
+            <p className="text-2xl font-black text-stone-900 mb-2">시간 수정</p>
+            <p className="text-lg text-stone-500 mb-5 font-bold">
+              {healthChecks.find((c) => c.id === editingCheckId)?.emoji}{" "}
+              {healthChecks.find((c) => c.id === editingCheckId)?.title}
+            </p>
+            <input
+              type="time"
+              value={editingCheckTime}
+              onChange={(e) => setEditingCheckTime(e.target.value)}
+              className="w-full bg-stone-50 rounded-2xl px-4 py-5 text-3xl font-black text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500 mb-5"
+            />
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => void handleCheckTimeSave()}
+                className="flex-1 bg-emerald-800 text-white text-xl font-black py-5 rounded-2xl active:scale-95"
+              >
+                저장
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingCheckId(null)}
+                className="flex-1 bg-stone-100 text-stone-500 text-xl font-bold py-5 rounded-2xl active:scale-95"
+              >
                 취소
               </button>
             </div>
