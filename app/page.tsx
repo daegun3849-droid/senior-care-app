@@ -651,11 +651,18 @@ const WelfareCenterCarePage = () => {
         setIsParsingVoice(false);
       }
     };
-    recognition.onerror = (() => {
+    recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
       setIsListening(false);
-      // 에러 세부 정보는 브라우저 콘솔에서 확인 가능
-      // 마이크 권한 문제 시 아래 안내
-    }) as () => void;
+      if (e.error === "not-allowed") {
+        alert("마이크 사용 허가가 필요합니다.\n\n크롬 주소창 왼쪽 🔒 자물쇠 클릭\n→ 마이크 → 허용\n→ 페이지 새로고침 후 다시 시도하세요.");
+      } else if (e.error === "no-speech") {
+        alert("말씀을 듣지 못했어요.\n마이크에 가까이 대고 다시 눌러주세요.");
+      } else if (e.error === "audio-capture") {
+        alert("마이크를 찾을 수 없습니다.\n마이크가 연결되어 있는지 확인해 주세요.");
+      } else if (e.error === "network") {
+        alert("인터넷 연결을 확인해 주세요.\n음성 인식에 인터넷이 필요합니다.");
+      }
+    };
     recognitionRef.current = recognition;
     try { recognition.start(); } catch { setIsListening(false); }
   };

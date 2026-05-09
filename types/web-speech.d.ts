@@ -2,6 +2,11 @@
  * Web Speech API — 브라우저 음성 인식용 최소 타입 선언
  */
 
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string;  // 'not-allowed' | 'no-speech' | 'audio-capture' | 'network' 등
+  readonly message: string;
+}
+
 interface SpeechRecognition extends EventTarget {
   lang: string;
   continuous: boolean;
@@ -9,7 +14,7 @@ interface SpeechRecognition extends EventTarget {
   onstart: (() => void) | null;
   onend: (() => void) | null;
   onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   start(): void;
   stop(): void;
 }
