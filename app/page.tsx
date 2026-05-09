@@ -651,7 +651,16 @@ const WelfareCenterCarePage = () => {
         setIsParsingVoice(false);
       }
     };
-    recognition.onerror = () => { setIsListening(false); };
+    recognition.onerror = (e: Event & { error?: string }) => {
+      setIsListening(false);
+      const err = e.error ?? "";
+      if (err === "not-allowed" || err === "permission-denied") {
+        alert("마이크 권한이 필요합니다.\n\n브라우저 주소창 왼쪽 자물쇠(🔒) 아이콘 → 마이크 → 허용 으로 바꾼 뒤 다시 시도하세요.");
+      } else if (err === "no-speech") {
+        alert("말씀을 듣지 못했어요. 마이크에 가까이 대고 다시 말씀해 주세요.");
+      }
+      // 에러 시에도 입력창은 그대로 유지
+    };
     recognitionRef.current = recognition;
     try { recognition.start(); } catch { setIsListening(false); }
   };
@@ -1166,12 +1175,19 @@ const WelfareCenterCarePage = () => {
 
             {/* 듣는 중 표시 */}
             {isListening && (
-              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 flex items-center gap-3">
-                <span className="text-3xl animate-pulse">🎙️</span>
-                <div>
-                  <p className="text-base font-black text-red-700">듣고 있어요...</p>
-                  <p className="text-sm text-red-500">말씀이 끝나면 자동으로 입력됩니다</p>
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl animate-pulse">🎙️</span>
+                  <div>
+                    <p className="text-base font-black text-red-700">듣고 있어요...</p>
+                    <p className="text-sm text-red-500">말씀이 끝나면 자동으로 입력됩니다</p>
+                  </div>
                 </div>
+                <button type="button"
+                  onClick={() => { recognitionRef.current?.stop(); setIsListening(false); }}
+                  className="bg-red-500 text-white text-sm font-black px-3 py-2 rounded-xl active:scale-95">
+                  멈추기
+                </button>
               </div>
             )}
 
