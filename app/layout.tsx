@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://senior-care-app.vercel.app';
-const TITLE = '어르신 돌봄 플래너';
-const DESCRIPTION = '음성으로 간편하게! 어르신을 위한 건강·일정 관리 서비스';
+const TITLE = '노인복지관 어르신 돌봄';
+const DESCRIPTION =
+  '노인복지관에서 어르신 하루를 돕는 서비스입니다. 큰 글씨로 복약·건강·프로그램·일정을 쉽게 확인하고, 말로도 입력할 수 있어요.';
 
 export const metadata: Metadata = {
   /* ── 기본 메타데이터 ── */
@@ -24,9 +25,18 @@ export const metadata: Metadata = {
   },
   description: DESCRIPTION,
   applicationName: TITLE,
-  keywords: ['어르신', '노인', '돌봄', '복약 알림', '일정 관리', '음성 입력', '건강 체크'],
-  authors: [{ name: 'Senior Care App Team' }],
-  creator: 'Senior Care App',
+  keywords: [
+    '노인복지관',
+    '어르신',
+    '돌봄',
+    '복지관 프로그램',
+    '복약',
+    '건강',
+    '일정',
+    '음성 입력',
+  ],
+  authors: [{ name: '노인복지관 어르신 돌봄' }],
+  creator: '노인복지관 어르신 돌봄',
 
   /* ── 검색 엔진 ── */
   robots: {
@@ -70,7 +80,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-stone-100 text-stone-900`}>
         {children}
       </body>
     </html>

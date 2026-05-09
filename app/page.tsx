@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * 어르신 돌봄 플래너 - 메인 페이지
- * 큰 글씨, 간단한 UI, 음성 입력, 가족 알림 지원
+ * 노인복지관 어르신 돌봄 - 메인 화면
+ * 큰 글씨·단순 조작, 복약·건강·복지관 일정, 음성 입력, 가족·담당자 알림
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -40,14 +40,15 @@ interface FamilyContact {
 
 const CONTACTS_KEY = "senior-family-contacts-v1";
 
-const HEALTH_EMOJIS = new Set(["💊", "🩸", "🩺", "🍚", "🚶", "💧", "🏥", "🩻", "🫀", "💉"]);
+const HEALTH_EMOJIS = new Set(["💊", "🩸", "🩺", "🍚", "🚶", "💧", "🏥", "🩻", "🫀", "💉", "🏛️", "🤝", "🧘"]);
 
 const DEFAULT_HEALTH_CHECKS = [
-  { emoji: "💊", title: "혈압약", routine_time: "08:00" },
-  { emoji: "🩸", title: "당뇨약", routine_time: "08:30" },
-  { emoji: "🩺", title: "혈압 측정", routine_time: "09:00" },
-  { emoji: "🍚", title: "세 끼 식사", routine_time: "12:00" },
-  { emoji: "🚶", title: "산책·운동", routine_time: "10:00" },
+  { emoji: "💊", title: "혈압약 복용", routine_time: "08:00" },
+  { emoji: "🩸", title: "당뇨약 복용", routine_time: "08:30" },
+  { emoji: "🩺", title: "혈압·혈당 체크", routine_time: "09:00" },
+  { emoji: "🏛️", title: "복지관 프로그램", routine_time: "10:00" },
+  { emoji: "🍚", title: "따뜻한 식사", routine_time: "12:00" },
+  { emoji: "🚶", title: "실내·외 걷기", routine_time: "14:00" },
   { emoji: "💧", title: "물 마시기", routine_time: "15:00" },
 ];
 
@@ -62,9 +63,9 @@ const getDateParts = () => {
 
 const getGreeting = () => {
   const h = new Date().getHours();
-  if (h < 12) return "좋은 아침이에요! 🌅";
-  if (h < 18) return "좋은 오후예요! ☀️";
-  return "좋은 저녁이에요! 🌙";
+  if (h < 12) return "좋은 아침입니다";
+  if (h < 18) return "편안한 오후 되세요";
+  return "수고 많으셨습니다, 좋은 저녁이에요";
 };
 
 const formatScheduleTime = (isoStr: string) => {
@@ -101,7 +102,7 @@ const addOneHour = (dateStr: string, timeStr: string): string => {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}:00`;
 };
 
-const SeniorCarePage = () => {
+const WelfareCenterCarePage = () => {
   const [user, setUser] = useState<{ id: string; email?: string | null } | null>(null);
   const [authLoaded, setAuthLoaded] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -266,7 +267,7 @@ const SeniorCarePage = () => {
   };
 
   const handleDeleteSchedule = async (id: string) => {
-    if (!confirm("이 일정을 삭제할까요?")) return;
+    if (!confirm("이 일정을 지울까요?")) return;
     await supabase.from("todos").delete().eq("id", id);
     if (user?.id) await fetchSchedules(user.id);
   };
@@ -315,10 +316,10 @@ const SeniorCarePage = () => {
       .map((s) => `• ${s.title}`)
       .join("\n");
     return (
-      `🌸 어르신 오늘 건강 현황\n📅 ${now.getMonth() + 1}월 ${now.getDate()}일\n\n` +
-      `💊 건강 체크 (${doneCount}/${total})\n${doneItems}\n` +
-      (todayScheduleList ? `\n📋 오늘 일정\n${todayScheduleList}\n` : "") +
-      `\n어르신 돌봄 플래너 🏠`
+      `🏛️ 노인복지관 어르신 오늘 안내\n📅 ${now.getMonth() + 1}월 ${now.getDate()}일\n\n` +
+      `건강·복약 체크 (${doneCount}/${total})\n${doneItems}\n` +
+      (todayScheduleList ? `\n오늘 일정\n${todayScheduleList}\n` : "") +
+      `\n노인복지관 어르신 돌봄`
     );
   };
 
@@ -354,7 +355,9 @@ const SeniorCarePage = () => {
   const handleSendEmail = (email: string) => {
     const msg = buildFamilyMessage();
     const now = new Date();
-    const subject = encodeURIComponent(`어르신 ${now.getMonth() + 1}월 ${now.getDate()}일 건강 현황`);
+    const subject = encodeURIComponent(
+      `복지관 안내 ${now.getMonth() + 1}월 ${now.getDate()}일 어르신 건강·일정`,
+    );
     window.location.href = `mailto:${email}?subject=${subject}&body=${encodeURIComponent(msg)}`;
   };
 
@@ -365,7 +368,7 @@ const SeniorCarePage = () => {
     }
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
-    const SR = (window.SpeechRecognition || window.webkitSpeechRecognition) as typeof SpeechRecognition;
+    const SR = (window.SpeechRecognition || window.webkitSpeechRecognition) as new () => SpeechRecognition;
     const recognition = new SR();
     recognition.lang = "ko-KR";
     recognition.continuous = false;
@@ -446,26 +449,30 @@ const SeniorCarePage = () => {
 
   if (!authLoaded) {
     return (
-      <div className="min-h-screen bg-sky-50 flex items-center justify-center">
-        <p className="text-3xl font-bold text-sky-600 animate-pulse">잠시만요...</p>
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center">
+        <p className="text-3xl font-bold text-emerald-900 animate-pulse">불러오는 중...</p>
       </div>
     );
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen bg-sky-50 flex flex-col items-center justify-center px-6">
+      <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center px-6">
         <div className="text-center mb-10">
-          <p className="text-7xl mb-4">🌸</p>
-          <h1 className="text-4xl font-black text-sky-700 mb-3">어르신 돌봄 플래너</h1>
-          <p className="text-xl text-slate-500">건강하고 즐거운 하루를 함께해요</p>
+          <p className="text-7xl mb-4" aria-hidden>🏛️</p>
+          <h1 className="text-4xl font-black text-emerald-950 mb-2 leading-tight">
+            노인복지관<br />어르신 돌봄
+          </h1>
+          <p className="text-xl text-stone-600 font-bold px-2">
+            복약·건강·복지관 일정을 큰 글씨로, 말로도 적을 수 있어요
+          </p>
         </div>
         <button type="button" onClick={() => { window.location.href = "/login"; }}
-          className="w-full max-w-sm bg-sky-500 text-white text-3xl font-black py-8 rounded-[32px] shadow-2xl active:scale-95 transition-all">
-          시작하기
+          className="w-full max-w-sm bg-emerald-800 text-white text-3xl font-black py-8 rounded-[32px] shadow-2xl active:scale-[0.98] transition-all">
+          이용 시작하기
         </button>
         <button type="button" onClick={() => { window.location.href = "/signup"; }}
-          className="mt-6 text-xl font-bold text-sky-600 underline underline-offset-4">
+          className="mt-6 text-xl font-bold text-emerald-900 underline underline-offset-4">
           처음이신가요? 회원가입
         </button>
       </div>
@@ -473,24 +480,25 @@ const SeniorCarePage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-sky-50 flex flex-col" style={{ maxWidth: 480, margin: "0 auto" }}>
+    <div className="min-h-screen bg-stone-100 flex flex-col" style={{ maxWidth: 480, margin: "0 auto" }}>
 
       {/* 헤더 */}
-      <header className="bg-white px-5 pt-7 pb-5 shadow-sm">
+      <header className="bg-white px-5 pt-7 pb-5 shadow-sm border-b border-stone-100">
         <div className="flex justify-between items-center">
           <div>
-            <p className="text-lg font-bold text-sky-500 leading-tight">{getGreeting()}</p>
-            <p className="text-lg font-bold text-slate-400 leading-tight">{todayYear}</p>
-            <p className="text-3xl font-black text-slate-800 leading-tight mt-0.5">{todayDate}</p>
+            <p className="text-xs font-black tracking-wide text-emerald-800 uppercase">노인복지관 어르신 돌봄</p>
+            <p className="text-lg font-bold text-emerald-900 leading-tight mt-1">{getGreeting()}</p>
+            <p className="text-lg font-bold text-stone-500 leading-tight">{todayYear}</p>
+            <p className="text-3xl font-black text-stone-900 leading-tight mt-0.5">{todayDate}</p>
           </div>
           <div className="flex flex-col gap-2 items-end ml-3">
             <button type="button" onClick={() => setShowFamilyShare(true)}
-              className="bg-rose-50 text-rose-500 border border-rose-200 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap">
-              <span className="text-xl">👨‍👩‍👧</span> 가족 알림
+              className="bg-amber-50 text-amber-900 border-2 border-amber-300 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-xl" aria-hidden>📣</span> 가족·담당자 알림
             </button>
             <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = "/login"; })}
-              className="bg-slate-100 text-slate-500 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95">
-              나가기
+              className="bg-stone-100 text-stone-600 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95 border border-stone-200">
+              로그아웃
             </button>
           </div>
         </div>
@@ -505,9 +513,9 @@ const SeniorCarePage = () => {
             {/* 구버전 항목 감지 배너 */}
             {showResetBanner && (
               <div className="bg-amber-50 border-2 border-amber-300 rounded-[24px] p-5">
-                <p className="text-xl font-black text-amber-700 mb-1">⚠️ 건강 항목 교체 안내</p>
-                <p className="text-lg text-amber-600 leading-relaxed mb-4">
-                  기존 항목(아침기도, 메일 등)이 있어요.<br />어르신 건강 항목으로 바꿔드릴까요?
+                <p className="text-xl font-black text-amber-900 mb-1">복지관 맞춤으로 바꾸기</p>
+                <p className="text-lg text-amber-800 leading-relaxed mb-4">
+                  예전 항목만 있어요.<br />복지관에서 쓰기 좋은 건강·복약 항목으로 바꿀까요?
                 </p>
                 <div className="flex gap-3">
                   <button type="button" onClick={() => void handleResetHealthChecks()}
@@ -525,9 +533,9 @@ const SeniorCarePage = () => {
             {/* 오늘 건강 체크 */}
             <section className="bg-white rounded-[28px] p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-2xl font-black text-slate-700">오늘의 건강 체크</h2>
+                <h2 className="text-2xl font-black text-stone-800">오늘 건강·복약</h2>
                 <div className="flex items-center gap-2">
-                  <span className="text-xl font-bold text-sky-600 bg-sky-100 px-4 py-1.5 rounded-full">
+                  <span className="text-xl font-bold text-emerald-800 bg-emerald-100 px-4 py-1.5 rounded-full">
                     {doneCount}/{totalCount}
                   </span>
                   <button type="button" onClick={() => setShowResetConfirm(true)}
@@ -538,16 +546,16 @@ const SeniorCarePage = () => {
               </div>
 
               <div className="w-full bg-slate-100 rounded-full h-4 mb-4">
-                <div className="bg-sky-400 h-4 rounded-full transition-all duration-700"
+                <div className="bg-emerald-600 h-4 rounded-full transition-all duration-700"
                   style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }} />
               </div>
 
               {doneCount === totalCount && totalCount > 0 && (
-                <div className="text-center mb-4 py-3 bg-sky-50 rounded-2xl">
-                  <p className="text-xl font-black text-sky-600">🎉 오늘 건강 체크 완료!</p>
+                <div className="text-center mb-4 py-3 bg-emerald-50 rounded-2xl">
+                  <p className="text-xl font-black text-emerald-900">오늘 체크를 모두 하셨어요</p>
                   <button type="button" onClick={() => setShowFamilyShare(true)}
-                    className="mt-2 text-lg font-bold text-rose-500 underline underline-offset-2">
-                    👨‍👩‍👧 가족에게 알리기
+                    className="mt-2 text-lg font-bold text-amber-800 underline underline-offset-2">
+                    가족·담당자에게 알리기
                   </button>
                 </div>
               )}
@@ -558,7 +566,7 @@ const SeniorCarePage = () => {
                   return (
                     <button key={check.id} type="button" onClick={() => void handleToggleHealth(check.id)}
                       className={`relative flex flex-col items-center justify-center py-7 rounded-[24px] transition-all active:scale-95 select-none ${
-                        isDone ? "bg-sky-500 shadow-lg shadow-sky-200" : "bg-sky-50 border-2 border-sky-100"
+                        isDone ? "bg-emerald-700 shadow-lg shadow-emerald-200" : "bg-emerald-50 border-2 border-emerald-100"
                       }`}>
                       {isDone && <span className="absolute top-2 right-3 text-xl">✅</span>}
                       <span className="text-5xl mb-2">{check.emoji}</span>
@@ -566,7 +574,7 @@ const SeniorCarePage = () => {
                         {check.title}
                       </span>
                       {check.routine_time && (
-                        <span className={`text-base font-bold mt-1 ${isDone ? "text-sky-100" : "text-slate-400"}`}>
+                        <span className={`text-base font-bold mt-1 ${isDone ? "text-emerald-100" : "text-slate-400"}`}>
                           {check.routine_time}
                         </span>
                       )}
@@ -578,12 +586,12 @@ const SeniorCarePage = () => {
 
             {/* 오늘 일정 */}
             <section>
-              <h2 className="text-2xl font-black text-slate-700 mb-3 px-1">오늘 일정</h2>
+              <h2 className="text-2xl font-black text-stone-800 mb-3 px-1">오늘 복지관·병원 일정</h2>
               {todaySchedules.length === 0 ? (
                 <div className="bg-white rounded-[24px] p-8 text-center shadow-sm">
                   <p className="text-5xl mb-3">📅</p>
-                  <p className="text-xl font-bold text-slate-400">오늘 일정이 없어요</p>
-                  <p className="text-lg text-slate-300 mt-1">아래 말하기 버튼으로 추가하세요</p>
+                  <p className="text-xl font-bold text-stone-500">오늘 적힌 일정이 없어요</p>
+                  <p className="text-lg text-stone-400 mt-1">아래 ‘말하기’로 복지관 일정을 넣을 수 있어요</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -592,7 +600,7 @@ const SeniorCarePage = () => {
                       <div className="flex items-center gap-3">
                         <button type="button" onClick={() => void handleToggleSchedule(s)}
                           className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
-                            s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
+                            s.is_completed ? "bg-emerald-600 border-emerald-600" : "border-stone-300 bg-white"
                           }`}>
                           {s.is_completed && (
                             <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -604,7 +612,7 @@ const SeniorCarePage = () => {
                           <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : "text-slate-800"}`}>
                             {s.title}
                           </p>
-                          <p className="text-lg font-bold text-sky-500 mt-0.5">{formatScheduleTime(s.start_time)}</p>
+                          <p className="text-lg font-bold text-emerald-700 mt-0.5">{formatScheduleTime(s.start_time)}</p>
                         </div>
                         <button type="button" onClick={() => handleOpenEdit(s)}
                           className="w-12 h-12 flex items-center justify-center text-2xl bg-slate-50 rounded-2xl active:scale-90 flex-shrink-0">
@@ -622,7 +630,7 @@ const SeniorCarePage = () => {
         {/* ── 일정 탭 ── */}
         {activeTab === "schedule" && (
           <div className="px-4 pt-5 space-y-3">
-            <h2 className="text-2xl font-black text-slate-700 mb-1">전체 일정</h2>
+            <h2 className="text-2xl font-black text-stone-800 mb-1">모든 일정</h2>
             {schedules.length === 0 ? (
               <div className="bg-white rounded-[24px] p-10 text-center shadow-sm">
                 <p className="text-5xl mb-3">📋</p>
@@ -637,7 +645,7 @@ const SeniorCarePage = () => {
                       {/* 완료 버튼 */}
                       <button type="button" onClick={() => void handleToggleSchedule(s)}
                         className={`w-14 h-14 rounded-full border-4 flex-shrink-0 flex items-center justify-center transition-all active:scale-90 ${
-                          s.is_completed ? "bg-sky-500 border-sky-500" : "border-slate-300 bg-white"
+                          s.is_completed ? "bg-emerald-600 border-emerald-600" : "border-stone-300 bg-white"
                         }`}>
                         {s.is_completed && (
                           <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -649,14 +657,14 @@ const SeniorCarePage = () => {
                         <p className={`text-2xl font-black truncate ${s.is_completed ? "line-through text-slate-300" : isPast ? "text-rose-500" : "text-slate-800"}`}>
                           {s.title}
                         </p>
-                        <p className={`text-lg font-bold mt-0.5 ${isPast && !s.is_completed ? "text-rose-400" : "text-sky-500"}`}>
+                        <p className={`text-lg font-bold mt-0.5 ${isPast && !s.is_completed ? "text-rose-400" : "text-emerald-700"}`}>
                           {formatScheduleTime(s.start_time)}
                           {isPast && !s.is_completed && " ⚠️"}
                         </p>
                       </div>
                       {/* 수정 버튼 */}
                       <button type="button" onClick={() => handleOpenEdit(s)}
-                        className="w-12 h-12 flex items-center justify-center text-2xl bg-blue-50 rounded-2xl active:scale-90 flex-shrink-0">
+                        className="w-12 h-12 flex items-center justify-center text-2xl bg-emerald-50 rounded-2xl active:scale-90 flex-shrink-0">
                         ✏️
                       </button>
                       {/* 삭제 버튼 */}
@@ -675,34 +683,34 @@ const SeniorCarePage = () => {
         {/* ── 일정 추가 탭 ── */}
         {activeTab === "add" && (
           <div className="px-4 pt-5 space-y-4">
-            <h2 className="text-2xl font-black text-slate-700">일정 추가</h2>
+            <h2 className="text-2xl font-black text-stone-800">일정 적기</h2>
             {voiceText && (
-              <div className="bg-sky-50 border-2 border-sky-200 rounded-[24px] p-5">
-                <p className="text-lg font-bold text-sky-600 mb-1">🎤 말씀하신 내용</p>
+              <div className="bg-emerald-50 border-2 border-emerald-200 rounded-[24px] p-5">
+                <p className="text-lg font-bold text-emerald-900 mb-1">말씀하신 내용</p>
                 <p className="text-xl font-bold text-slate-700">&ldquo;{voiceText}&rdquo;</p>
-                {isParsingVoice && <p className="text-lg text-sky-400 mt-2 animate-pulse">날짜·시간 분석 중...</p>}
+                {isParsingVoice && <p className="text-lg text-emerald-600 mt-2 animate-pulse">날짜·시간 분석 중...</p>}
               </div>
             )}
             <div className="bg-white rounded-[24px] p-5 shadow-sm space-y-4">
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">📝 일정 이름</label>
-                <input className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300 placeholder:text-slate-300"
-                  value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="예: 병원 진료, 복지관" />
+                <label className="block text-xl font-black text-stone-700 mb-2">무슨 일정인가요</label>
+                <input className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500 placeholder:text-stone-400"
+                  value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="예: 복지관 낮잠터, 병원, 점심 모임" />
               </div>
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
-                <input type="date" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                <label className="block text-xl font-black text-stone-700 mb-2">날짜</label>
+                <input type="date" className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                   value={newDate} onChange={(e) => setNewDate(e.target.value)} />
               </div>
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
-                <input type="time" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                <label className="block text-xl font-black text-stone-700 mb-2">시간</label>
+                <input type="time" className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                   value={newTime} onChange={(e) => setNewTime(e.target.value)} />
               </div>
             </div>
             <button type="button" onClick={() => void handleSaveSchedule()} disabled={!newTitle.trim() || isSaving}
-              className="w-full bg-sky-500 text-white text-3xl font-black py-7 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40">
-              {isSaving ? "저장 중..." : "일정 저장 ✅"}
+              className="w-full bg-emerald-800 text-white text-3xl font-black py-7 rounded-[32px] shadow-xl active:scale-95 transition-all disabled:opacity-40">
+              {isSaving ? "저장 중..." : "일정 저장하기"}
             </button>
             <button type="button" onClick={() => { setNewTitle(""); setNewDate(""); setNewTime(""); setVoiceText(""); }}
               className="w-full bg-slate-100 text-slate-500 text-xl font-bold py-5 rounded-[24px] active:scale-95 transition-all">
@@ -716,28 +724,28 @@ const SeniorCarePage = () => {
       {editingSchedule && (
         <div className="fixed inset-0 bg-black/60 flex items-end justify-center z-50">
           <div className="bg-white rounded-t-[40px] w-full max-w-[480px] p-7 shadow-2xl">
-            <h3 className="text-2xl font-black text-slate-800 mb-5">✏️ 일정 수정</h3>
+            <h3 className="text-2xl font-black text-stone-900 mb-5">일정 고치기</h3>
             <div className="space-y-4 mb-6">
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">📝 일정 이름</label>
-                <input className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                <label className="block text-xl font-black text-stone-700 mb-2">일정 이름</label>
+                <input className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                   value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
               </div>
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">📅 날짜</label>
-                <input type="date" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                <label className="block text-xl font-black text-stone-700 mb-2">날짜</label>
+                <input type="date" className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                   value={editDate} onChange={(e) => setEditDate(e.target.value)} />
               </div>
               <div>
-                <label className="block text-xl font-black text-slate-600 mb-2">⏰ 시간</label>
-                <input type="time" className="w-full bg-sky-50 rounded-2xl px-4 py-4 text-2xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                <label className="block text-xl font-black text-stone-700 mb-2">시간</label>
+                <input type="time" className="w-full bg-stone-50 rounded-2xl px-4 py-4 text-2xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                   value={editTime} onChange={(e) => setEditTime(e.target.value)} />
               </div>
             </div>
             <div className="flex gap-3">
               <button type="button" onClick={() => void handleEditSave()} disabled={!editTitle.trim() || isEditSaving}
-                className="flex-1 bg-sky-500 text-white text-2xl font-black py-6 rounded-[24px] active:scale-95 disabled:opacity-40">
-                {isEditSaving ? "저장 중..." : "수정 완료 ✅"}
+                className="flex-1 bg-emerald-800 text-white text-2xl font-black py-6 rounded-[24px] active:scale-95 disabled:opacity-40">
+                {isEditSaving ? "저장 중..." : "수정 저장"}
               </button>
               <button type="button" onClick={() => setEditingSchedule(null)}
                 className="flex-1 bg-slate-100 text-slate-500 text-2xl font-bold py-6 rounded-[24px] active:scale-95">
@@ -755,8 +763,8 @@ const SeniorCarePage = () => {
 
             <div className="px-7 pt-7 pb-4 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-2xl font-black text-slate-800">👨‍👩‍👧 가족·담당자 알리기</h3>
-                <p className="text-lg text-slate-500 mt-0.5">오늘 건강 현황을 바로 보내드려요</p>
+                <h3 className="text-2xl font-black text-stone-900">가족·복지관 담당자 알리기</h3>
+                <p className="text-lg text-stone-600 mt-0.5 font-bold">오늘 건강·일정을 문자나 카톡으로 보낼 수 있어요</p>
               </div>
               <button type="button" onClick={() => { setShowFamilyShare(false); setShowAddContact(false); }}
                 className="text-2xl text-slate-400 bg-slate-100 w-11 h-11 rounded-full flex items-center justify-center active:scale-95">
@@ -767,19 +775,19 @@ const SeniorCarePage = () => {
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
               {/* 오늘 건강 현황 미리보기 */}
-              <div className="bg-sky-50 rounded-[20px] p-5 space-y-1.5">
-                <p className="text-lg font-black text-sky-700 mb-2">📋 보낼 내용 미리보기</p>
+              <div className="bg-emerald-50 rounded-[20px] p-5 space-y-1.5">
+                <p className="text-lg font-black text-emerald-950 mb-2">보낼 내용 미리보기</p>
                 {healthChecks.map((c) => {
                   const done = healthLogs.some((l) => l.routine_id === c.id && l.done_date === todayStr);
                   return (
-                    <p key={c.id} className={`text-xl font-bold ${done ? "text-sky-700" : "text-slate-400"}`}>
+                    <p key={c.id} className={`text-xl font-bold ${done ? "text-emerald-900" : "text-slate-400"}`}>
                       {done ? "✅" : "❌"} {c.title}
                     </p>
                   );
                 })}
                 {todaySchedules.length > 0 && (
                   <>
-                    <p className="text-base font-black text-sky-600 pt-2">오늘 일정</p>
+                    <p className="text-base font-black text-emerald-800 pt-2">오늘 일정</p>
                     {todaySchedules.map((s) => (
                       <p key={s.id} className="text-lg font-bold text-slate-600">• {s.title}</p>
                     ))}
@@ -790,9 +798,9 @@ const SeniorCarePage = () => {
               {/* 연락처 목록 */}
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-xl font-black text-slate-700">📱 연락처</p>
+                  <p className="text-xl font-black text-stone-800">연락처</p>
                   <button type="button" onClick={() => setShowAddContact(!showAddContact)}
-                    className="text-lg font-black text-sky-600 bg-sky-50 px-4 py-2 rounded-2xl border border-sky-200 active:scale-95">
+                    className="text-lg font-black text-emerald-800 bg-emerald-50 px-4 py-2 rounded-2xl border border-emerald-200 active:scale-95">
                     + 추가
                   </button>
                 </div>
@@ -800,19 +808,19 @@ const SeniorCarePage = () => {
                 {/* 연락처 추가 폼 */}
                 {showAddContact && (
                   <div className="bg-slate-50 rounded-[20px] p-5 mb-4 space-y-3">
-                    <p className="text-lg font-black text-slate-600">새 연락처 등록</p>
-                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
-                      placeholder="이름 (예: 딸 김○○, 담당 간호사)"
+                    <p className="text-lg font-black text-stone-700">새 연락처 등록</p>
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
+                      placeholder="이름 (예: 사회복지사, 딸 ○○)"
                       value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
-                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                       placeholder="전화번호 (예: 010-1234-5678)"
                       type="tel" value={newContactPhone} onChange={(e) => setNewContactPhone(e.target.value)} />
-                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-slate-800 outline-none border-2 border-transparent focus:border-sky-300"
+                    <input className="w-full bg-white rounded-2xl px-4 py-3.5 text-xl font-bold text-stone-900 outline-none border-2 border-stone-200 focus:border-emerald-500"
                       placeholder="이메일 (선택)"
                       type="email" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
                     <div className="flex gap-3">
                       <button type="button" onClick={handleSaveContact}
-                        className="flex-1 bg-sky-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95">
+                        className="flex-1 bg-emerald-800 text-white text-xl font-black py-4 rounded-2xl active:scale-95">
                         저장
                       </button>
                       <button type="button" onClick={() => setShowAddContact(false)}
@@ -828,8 +836,8 @@ const SeniorCarePage = () => {
                   <div className="bg-slate-50 rounded-[20px] p-6 text-center">
                     <p className="text-xl font-bold text-slate-400">등록된 연락처가 없어요</p>
                     <p className="text-lg text-slate-300 mt-1">위 + 추가 버튼으로 등록하세요</p>
-                    <p className="text-base text-slate-400 mt-3 bg-amber-50 rounded-xl px-3 py-2">
-                      📌 가족, 요양보호사, 담당 간호사 등록 가능
+                    <p className="text-base text-stone-600 mt-3 bg-amber-50 rounded-xl px-3 py-2 font-bold">
+                      가족, 요양보호사, 복지관 담당자 등을 넣을 수 있어요
                     </p>
                   </div>
                 ) : (
@@ -846,14 +854,14 @@ const SeniorCarePage = () => {
                         <div className="flex flex-col gap-2">
                           {contact.phone && (
                             <button type="button" onClick={() => handleSendSMS(contact.phone)}
-                              className="w-full bg-green-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
-                              <span>💬</span> 문자 보내기 ({contact.phone})
+                              className="w-full bg-green-700 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
+                              <span aria-hidden>💬</span> 문자 보내기 ({contact.phone})
                             </button>
                           )}
                           {contact.email && (
                             <button type="button" onClick={() => handleSendEmail(contact.email)}
-                              className="w-full bg-sky-500 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
-                              <span>📧</span> 이메일 보내기
+                              className="w-full bg-emerald-800 text-white text-xl font-black py-4 rounded-2xl active:scale-95 flex items-center justify-center gap-2">
+                              <span aria-hidden>📧</span> 이메일 보내기
                             </button>
                           )}
                         </div>
@@ -865,9 +873,9 @@ const SeniorCarePage = () => {
 
               {/* 직접 선택해서 보내기 안내 */}
               <div className="bg-amber-50 border border-amber-200 rounded-[20px] p-5">
-                <p className="text-lg font-black text-amber-700 mb-1">📌 카카오톡으로 보내는 방법</p>
-                <p className="text-lg text-amber-600 leading-relaxed">
-                  아래 내용을 길게 눌러 복사한 뒤,<br />카카오톡을 열고 붙여넣기 하세요
+                <p className="text-lg font-black text-amber-900 mb-1">카카오톡으로 보내기</p>
+                <p className="text-lg text-amber-800 leading-relaxed font-bold">
+                  아래 글을 길게 눌러 복사한 뒤,<br />카카오톡에 붙여 넣으세요
                 </p>
                 <textarea
                   readOnly
@@ -887,15 +895,15 @@ const SeniorCarePage = () => {
       {showResetConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-6">
           <div className="bg-white rounded-[32px] p-7 w-full max-w-sm shadow-2xl">
-            <p className="text-2xl font-black text-slate-800 mb-2">건강 체크 초기화</p>
-            <div className="bg-sky-50 rounded-2xl p-4 mb-5 space-y-1">
+            <p className="text-2xl font-black text-stone-900 mb-2">건강·복약 항목 다시 맞추기</p>
+            <div className="bg-emerald-50 rounded-2xl p-4 mb-5 space-y-1">
               {DEFAULT_HEALTH_CHECKS.map((c) => (
-                <p key={c.title} className="text-lg font-bold text-sky-700">{c.emoji} {c.title}</p>
+                <p key={c.title} className="text-lg font-bold text-emerald-900">{c.emoji} {c.title}</p>
               ))}
             </div>
             <div className="flex gap-3">
               <button type="button" onClick={() => void handleResetHealthChecks()}
-                className="flex-1 bg-sky-500 text-white text-xl font-black py-5 rounded-2xl active:scale-95">
+                className="flex-1 bg-emerald-800 text-white text-xl font-black py-5 rounded-2xl active:scale-95">
                 네, 바꿀게요
               </button>
               <button type="button" onClick={() => setShowResetConfirm(false)}
@@ -908,24 +916,24 @@ const SeniorCarePage = () => {
       )}
 
       {/* 하단 네비게이션 */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-100 shadow-2xl" style={{ maxWidth: 480, margin: "0 auto" }}>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-stone-200 shadow-2xl" style={{ maxWidth: 480, margin: "0 auto" }}>
         <div className="flex items-center justify-around px-4 py-3">
           <button type="button" onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "home" ? "bg-sky-50" : ""}`}>
-            <span className="text-4xl">🏠</span>
-            <span className={`text-lg font-black ${activeTab === "home" ? "text-sky-600" : "text-slate-400"}`}>홈</span>
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "home" ? "bg-emerald-50" : ""}`}>
+            <span className="text-4xl" aria-hidden>🏛️</span>
+            <span className={`text-lg font-black ${activeTab === "home" ? "text-emerald-900" : "text-stone-400"}`}>오늘</span>
           </button>
           <button type="button" onClick={handleVoiceInput}
             className={`flex flex-col items-center justify-center w-24 h-24 rounded-full shadow-2xl transition-all active:scale-95 -mt-8 ${
-              isListening ? "bg-rose-500 animate-pulse shadow-rose-300" : "bg-sky-500 shadow-sky-200"
+              isListening ? "bg-orange-600 animate-pulse shadow-orange-300" : "bg-emerald-800 shadow-emerald-300"
             }`}>
-            <span className="text-4xl">{isListening ? "🛑" : "🎤"}</span>
+            <span className="text-4xl" aria-hidden>{isListening ? "⏹️" : "🎤"}</span>
             <span className="text-base font-black text-white">{isListening ? "멈추기" : "말하기"}</span>
           </button>
           <button type="button" onClick={() => setActiveTab("schedule")}
-            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "schedule" ? "bg-sky-50" : ""}`}>
-            <span className="text-4xl">📋</span>
-            <span className={`text-lg font-black ${activeTab === "schedule" ? "text-sky-600" : "text-slate-400"}`}>일정</span>
+            className={`flex flex-col items-center gap-1 px-6 py-3 rounded-2xl transition-all active:scale-95 ${activeTab === "schedule" ? "bg-emerald-50" : ""}`}>
+            <span className="text-4xl" aria-hidden>📋</span>
+            <span className={`text-lg font-black ${activeTab === "schedule" ? "text-emerald-900" : "text-stone-400"}`}>일정</span>
           </button>
         </div>
       </nav>
@@ -933,4 +941,4 @@ const SeniorCarePage = () => {
   );
 };
 
-export default SeniorCarePage;
+export default WelfareCenterCarePage;
