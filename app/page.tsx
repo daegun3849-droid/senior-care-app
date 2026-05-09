@@ -651,16 +651,11 @@ const WelfareCenterCarePage = () => {
         setIsParsingVoice(false);
       }
     };
-    recognition.onerror = (e: Event & { error?: string }) => {
+    recognition.onerror = (() => {
       setIsListening(false);
-      const err = e.error ?? "";
-      if (err === "not-allowed" || err === "permission-denied") {
-        alert("마이크 권한이 필요합니다.\n\n브라우저 주소창 왼쪽 자물쇠(🔒) 아이콘 → 마이크 → 허용 으로 바꾼 뒤 다시 시도하세요.");
-      } else if (err === "no-speech") {
-        alert("말씀을 듣지 못했어요. 마이크에 가까이 대고 다시 말씀해 주세요.");
-      }
-      // 에러 시에도 입력창은 그대로 유지
-    };
+      // 에러 세부 정보는 브라우저 콘솔에서 확인 가능
+      // 마이크 권한 문제 시 아래 안내
+    }) as () => void;
     recognitionRef.current = recognition;
     try { recognition.start(); } catch { setIsListening(false); }
   };
