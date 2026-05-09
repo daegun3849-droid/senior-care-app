@@ -604,8 +604,11 @@ const WelfareCenterCarePage = () => {
   };
 
   const handleVoiceInput = () => {
+    // 음성 지원 여부와 무관하게 입력 화면으로 먼저 이동
+    setActiveTab("add");
+
     if (!("SpeechRecognition" in window || "webkitSpeechRecognition" in window)) {
-      alert("이 기기에서는 음성 입력을 지원하지 않습니다.\n직접 입력창에 써 주세요.");
+      // 음성 미지원 기기 → 직접 입력 화면만 표시
       return;
     }
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
@@ -620,7 +623,6 @@ const WelfareCenterCarePage = () => {
     recognition.onresult = async (event) => {
       const transcript = event.results[0][0].transcript;
       setVoiceText(transcript);
-      setActiveTab("add");
       setNewTitle(transcript);
       setIsParsingVoice(true);
       try {
@@ -636,8 +638,10 @@ const WelfareCenterCarePage = () => {
           if (item.start) {
             const d = new Date(item.start);
             if (!isNaN(d.getTime())) {
-              setNewDate(d.toISOString().slice(0, 10));
-              setNewTime(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
+              // KST 기준 날짜·시간 파싱
+              const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+              setNewDate(kst.toISOString().slice(0, 10));
+              setNewTime(`${String(kst.getUTCHours()).padStart(2, "0")}:${String(kst.getUTCMinutes()).padStart(2, "0")}`);
             }
           }
         }
@@ -647,9 +651,9 @@ const WelfareCenterCarePage = () => {
         setIsParsingVoice(false);
       }
     };
-    recognition.onerror = () => { setIsListening(false); alert("음성을 인식하지 못했습니다."); };
+    recognition.onerror = () => { setIsListening(false); };
     recognitionRef.current = recognition;
-    recognition.start();
+    try { recognition.start(); } catch { setIsListening(false); }
   };
 
   const handleSaveSchedule = async () => {
@@ -658,8 +662,13 @@ const WelfareCenterCarePage = () => {
     setIsSaving(true);
     try {
       const now = new Date();
-      const startDt = newDate && newTime ? `${newDate}T${newTime}:00` : now.toISOString();
-      const endDt = newDate && newTime ? addOneHour(newDate, newTime) : new Date(now.getTime() + 3600000).toISOString();
+      // KST 기준 시간 → ISO 문자열 (시간대 명시)
+      const startDt = newDate && newTime
+        ? `${newDate}T${newTime}:00+09:00`
+        : now.toISOString();
+      const endDt = newDate && newTime
+        ? addOneHour(newDate, newTime)
+        : new Date(now.getTime() + 3600000).toISOString();
       const { error } = await supabase.from("todos").insert([{
         title: newTitle.trim(), description: "",
         start_time: startDt, end_time: endDt,
@@ -677,6 +686,7 @@ const WelfareCenterCarePage = () => {
       setActiveTab("schedule");
     } catch (e) {
       console.error("일정 저장 실패:", e);
+      alert("저장에 실패했습니다. 로그인 상태를 확인해 주세요.");
       alert(`저장에 실패했습니다.\n${e instanceof Error ? e.message : "다시 시도해 주세요."}`);
     } finally {
       setIsSaving(false);
@@ -1153,11 +1163,32 @@ const WelfareCenterCarePage = () => {
         {activeTab === "add" && (
           <div className="px-4 pt-5 space-y-4">
             <h2 className="text-2xl font-black text-stone-800">일정 적기</h2>
+
+            {/* 듣는 중 표시 */}
+            {isListening && (
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 flex items-center gap-3">
+                <span className="text-3xl animate-pulse">🎙️</span>
+                <div>
+                  <p className="text-base font-black text-red-700">듣고 있어요...</p>
+                  <p className="text-sm text-red-500">말씀이 끝나면 자동으로 입력됩니다</p>
+                </div>
+              </div>
+            )}
+
+            {/* 음성 인식 결과 */}
             {voiceText && (
               <div className="bg-emerald-50 border-2 border-emerald-200 rounded-[24px] p-5">
                 <p className="text-lg font-bold text-emerald-900 mb-1">말씀하신 내용</p>
                 <p className="text-xl font-bold text-slate-700">&ldquo;{voiceText}&rdquo;</p>
                 {isParsingVoice && <p className="text-lg text-emerald-600 mt-2 animate-pulse">날짜·시간 분석 중...</p>}
+              </div>
+            )}
+
+            {/* 음성 미사용 시 안내 */}
+            {!isListening && !voiceText && (
+              <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 flex items-center gap-3">
+                <span className="text-2xl">✏️</span>
+                <p className="text-sm font-bold text-stone-500">아래에 직접 입력하거나, 아래 마이크 버튼을 눌러 말씀하세요</p>
               </div>
             )}
             <div className="bg-white rounded-[24px] p-5 shadow-sm space-y-4">
