@@ -5,7 +5,7 @@
  * 큰 글씨·단순 조작, 복약·건강·복지관 일정, 음성 입력, 가족·담당자 알림
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 import confetti from "canvas-confetti";
 
@@ -27,8 +27,10 @@ interface HealthCheck {
 }
 
 interface HealthLog {
+  id: string;
   routine_id: string;
   done_date: string;
+  logged_at: string | null;
 }
 
 interface FamilyContact {
@@ -36,6 +38,15 @@ interface FamilyContact {
   name: string;
   phone: string;
   email: string;
+}
+
+interface DailyQuiz {
+  type: string;
+  question: string;
+  hint: string;
+  choices: string[];
+  answer: string;
+  explanation: string;
 }
 
 const CONTACTS_KEY = "senior-family-contacts-v1";
@@ -177,6 +188,16 @@ const WelfareCenterCarePage = () => {
   const [editingCheckId, setEditingCheckId] = useState<string | null>(null);
   const [editingCheckTime, setEditingCheckTime] = useState("");
 
+  // 월간 달력 상태
+  const [monthlyLogs, setMonthlyLogs] = useState<Record<string, number>>({});
+  const [totalRoutineCount, setTotalRoutineCount] = useState(0);
+
+  // 일일 퀴즈 상태
+  const [quiz, setQuiz] = useState<DailyQuiz | null>(null);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizSelected, setQuizSelected] = useState<string | null>(null);
+  const [quizAnswered, setQuizAnswered] = useState(false);
+
   // 건강체크 항목 추가 상태
   const [showAddCheck, setShowAddCheck] = useState(false);
   const [newCheckEmoji, setNewCheckEmoji] = useState("💊");
@@ -248,9 +269,10 @@ const WelfareCenterCarePage = () => {
 
       const { data: lData } = await supabase
         .from("routine_logs")
-        .select("routine_id, done_date")
+        .select("id, routine_id, done_date, logged_at")
         .eq("user_id", userId)
-        .eq("done_date", todayStr);
+        .eq("done_date", todayStr)
+        .order("logged_at", { ascending: true });
       if (lData) setHealthLogs(lData as HealthLog[]);
     } catch (e) {
       console.error("건강 체크 조회 실패:", e);
@@ -278,21 +300,31 @@ const WelfareCenterCarePage = () => {
         setUser({ id: u.id, email: u.email });
         void fetchSchedules(u.id);
         void fetchHealthChecks(u.id);
+        void fetchMonthlyLogs(u.id);
       }
       setAuthLoaded(true);
     });
-  }, [fetchSchedules, fetchHealthChecks]);
+  }, [fetchSchedules, fetchHealthChecks, fetchMonthlyLogs]);
 
   const handleToggleHealth = async (checkId: string) => {
     if (!user) return;
-    const isDone = healthLogs.some((l) => l.routine_id === checkId && l.done_date === todayStr);
+    const todayLogs = healthLogs.filter((l) => l.routine_id === checkId && l.done_date === todayStr);
+    const isDone = todayLogs.length > 0;
     try {
       if (isDone) {
-        await supabase.from("routine_logs").delete().eq("routine_id", checkId).eq("done_date", todayStr);
-        setHealthLogs((prev) => prev.filter((l) => !(l.routine_id === checkId && l.done_date === todayStr)));
+        // 가장 마지막 로그 하나만 취소 (실수 방지)
+        const lastLog = todayLogs[todayLogs.length - 1];
+        await supabase.from("routine_logs").delete().eq("id", lastLog.id);
+        setHealthLogs((prev) => prev.filter((l) => l.id !== lastLog.id));
       } else {
-        await supabase.from("routine_logs").insert({ routine_id: checkId, user_id: user.id, done_date: todayStr });
-        setHealthLogs((prev) => [...prev, { routine_id: checkId, done_date: todayStr }]);
+        // 새 로그 추가 (logged_at = 현재 시각)
+        const now = new Date().toISOString();
+        const { data: inserted } = await supabase
+          .from("routine_logs")
+          .insert({ routine_id: checkId, user_id: user.id, done_date: todayStr, logged_at: now })
+          .select("id, routine_id, done_date, logged_at")
+          .single();
+        if (inserted) setHealthLogs((prev) => [...prev, inserted as HealthLog]);
         confetti({ particleCount: 80, spread: 60, origin: { y: 0.7 } });
         if ("speechSynthesis" in window) {
           const check = healthChecks.find((c) => c.id === checkId);
@@ -305,6 +337,25 @@ const WelfareCenterCarePage = () => {
       }
     } catch (e) {
       console.error("건강 체크 토글 실패:", e);
+    }
+  };
+
+  // + 버튼: 이미 완료된 항목에 추가 로그 기록 (오늘 n번째 체크)
+  const handleAddHealthLog = async (checkId: string) => {
+    if (!user) return;
+    try {
+      const now = new Date().toISOString();
+      const { data: inserted } = await supabase
+        .from("routine_logs")
+        .insert({ routine_id: checkId, user_id: user.id, done_date: todayStr, logged_at: now })
+        .select("id, routine_id, done_date, logged_at")
+        .single();
+      if (inserted) {
+        setHealthLogs((prev) => [...prev, inserted as HealthLog]);
+        confetti({ particleCount: 50, spread: 40, origin: { y: 0.7 } });
+      }
+    } catch (e) {
+      console.error("추가 체크 기록 실패:", e);
     }
   };
 
@@ -327,6 +378,45 @@ const WelfareCenterCarePage = () => {
     await supabase.from("todos").delete().eq("id", id);
     if (user?.id) await fetchSchedules(user.id);
   };
+
+  const fetchMonthlyLogs = useCallback(async (userId: string) => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const [{ data: logs }, { data: routines }] = await Promise.all([
+      supabase.from("routine_logs").select("done_date")
+        .eq("user_id", userId).gte("done_date", firstDay).lte("done_date", lastDay),
+      supabase.from("routines").select("id").eq("user_id", userId),
+    ]);
+    const total = routines?.length ?? 0;
+    setTotalRoutineCount(total);
+    const counts: Record<string, number> = {};
+    for (const log of logs ?? []) {
+      const d = log.done_date as string;
+      counts[d] = (counts[d] ?? 0) + 1;
+    }
+    setMonthlyLogs(counts);
+  }, []);
+
+  const fetchQuiz = useCallback(async () => {
+    // 오늘 이미 불러왔으면 재요청 안 함
+    const cacheKey = `quiz-${todayStr}`;
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) { setQuiz(JSON.parse(cached) as DailyQuiz); return; }
+    } catch { /* 무시 */ }
+    setQuizLoading(true);
+    try {
+      const res = await fetch(`/api/ai-quiz?date=${todayStr}`);
+      const { quiz: q } = await res.json() as { quiz: DailyQuiz };
+      setQuiz(q);
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(q)); } catch { /* 무시 */ }
+    } catch (e) {
+      console.error("퀴즈 조회 실패:", e);
+    } finally {
+      setQuizLoading(false);
+    }
+  }, [todayStr]);
 
   const handleAddCheck = async () => {
     if (!newCheckTitle.trim() || !user?.id) return;
@@ -640,6 +730,87 @@ const WelfareCenterCarePage = () => {
               </div>
             )}
 
+            {/* 오늘의 퀴즈 카드 */}
+            <section className="bg-amber-50 rounded-[24px] p-5 shadow-sm border border-amber-200">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-xs font-bold text-amber-600 uppercase tracking-widest">오늘의 퀴즈</p>
+                  <p className="text-xl font-black text-amber-900">두뇌 자극 한 문제 🧠</p>
+                </div>
+                {!quiz && (
+                  <button
+                    type="button"
+                    onClick={() => void fetchQuiz()}
+                    disabled={quizLoading}
+                    className="bg-amber-400 text-amber-950 text-lg font-black px-5 py-3 rounded-2xl active:scale-95 disabled:opacity-50"
+                  >
+                    {quizLoading ? "생성 중…" : "퀴즈 시작"}
+                  </button>
+                )}
+              </div>
+
+              {quiz && (
+                <div>
+                  <p className="text-lg font-bold text-amber-700 mb-1">
+                    [{quiz.type}] {quiz.hint}
+                  </p>
+                  <p className="text-2xl font-black text-amber-950 mb-4 leading-snug">
+                    {quiz.question}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {quiz.choices.map((choice) => {
+                      const isSelected = quizSelected === choice;
+                      const isCorrect = choice === quiz.answer;
+                      let bg = "bg-white border-2 border-amber-200 text-stone-800";
+                      if (quizAnswered) {
+                        if (isCorrect) bg = "bg-emerald-500 border-emerald-500 text-white";
+                        else if (isSelected) bg = "bg-red-400 border-red-400 text-white";
+                      } else if (isSelected) {
+                        bg = "bg-amber-300 border-amber-400 text-amber-950";
+                      }
+                      return (
+                        <button
+                          key={choice}
+                          type="button"
+                          disabled={quizAnswered}
+                          onClick={() => {
+                            setQuizSelected(choice);
+                            setQuizAnswered(true);
+                            if (choice === quiz.answer) {
+                              confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+                              if ("speechSynthesis" in window) {
+                                const utter = new SpeechSynthesisUtterance("정답입니다! 훌륭해요!");
+                                utter.lang = "ko-KR"; utter.rate = 0.85;
+                                window.speechSynthesis.speak(utter);
+                              }
+                            }
+                          }}
+                          className={`${bg} text-xl font-black py-4 rounded-2xl active:scale-95 transition-all`}
+                        >
+                          {choice}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {quizAnswered && (
+                    <div className={`rounded-2xl p-4 ${quizSelected === quiz.answer ? "bg-emerald-100" : "bg-red-50"}`}>
+                      <p className={`text-lg font-black ${quizSelected === quiz.answer ? "text-emerald-800" : "text-red-700"}`}>
+                        {quizSelected === quiz.answer ? "🎉 정답이에요!" : `😊 정답은 "${quiz.answer}"이에요`}
+                      </p>
+                      <p className="text-base text-stone-600 mt-1">{quiz.explanation}</p>
+                      <button
+                        type="button"
+                        onClick={() => { setQuiz(null); setQuizSelected(null); setQuizAnswered(false); }}
+                        className="mt-3 text-base font-black text-amber-700 underline"
+                      >
+                        다른 문제 풀기
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
             {/* 오늘 건강·복약 체크 */}
             <section className="bg-white rounded-[28px] p-5 shadow-sm">
               <div className="flex items-center justify-between mb-3">
@@ -666,11 +837,33 @@ const WelfareCenterCarePage = () => {
               </div>
 
               {doneCount === totalCount && totalCount > 0 && (
-                <div className="text-center mb-4 py-3 bg-emerald-50 rounded-2xl">
-                  <p className="text-xl font-black text-emerald-900">오늘 체크를 모두 하셨어요</p>
+                <div className="text-center mb-4 py-3 bg-emerald-50 rounded-2xl space-y-2">
+                  <p className="text-xl font-black text-emerald-900">오늘 체크를 모두 하셨어요 🎉</p>
                   <button type="button" onClick={() => setShowFamilyShare(true)}
-                    className="mt-2 text-lg font-bold text-amber-800 underline underline-offset-2">
+                    className="text-lg font-bold text-amber-800 underline underline-offset-2">
                     가족·담당자에게 알리기
+                  </button>
+                </div>
+              )}
+              {/* 보호자 링크 공유 */}
+              {user && (
+                <div className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-2xl px-4 py-3 mb-2">
+                  <div>
+                    <p className="text-base font-black text-stone-700">보호자 현황 링크</p>
+                    <p className="text-sm text-stone-400">가족·요양보호사가 오늘 현황을 볼 수 있어요</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = `${window.location.origin}/caregiver/${user.id}`;
+                      if (navigator.clipboard) {
+                        void navigator.clipboard.writeText(url);
+                        alert("링크가 복사되었어요!\n가족·요양보호사에게 보내주세요.");
+                      }
+                    }}
+                    className="bg-emerald-800 text-white text-base font-black px-4 py-2.5 rounded-xl active:scale-95"
+                  >
+                    링크 복사
                   </button>
                 </div>
               )}
@@ -687,66 +880,99 @@ const WelfareCenterCarePage = () => {
                       <p className="text-base font-black text-stone-500 mb-2 px-1">{cat.label}</p>
                       <div className="space-y-2">
                         {items.map((check) => {
-                          const isDone = healthLogs.some(
+                          const todayLogList = healthLogs.filter(
                             (l) => l.routine_id === check.id && l.done_date === todayStr,
                           );
+                          const isDone = todayLogList.length > 0;
+                          const logCount = todayLogList.length;
                           return (
                             <div
                               key={check.id}
-                              className={`flex items-center gap-3 rounded-2xl px-4 py-3 transition-all ${
+                              className={`rounded-2xl px-4 py-3 transition-all ${
                                 isDone ? "bg-emerald-700" : "bg-stone-50 border border-stone-200"
                               }`}
                             >
-                              {/* 마침 버튼 */}
-                              <button
-                                type="button"
-                                onClick={() => void handleToggleHealth(check.id)}
-                                className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center active:scale-90 transition-all ${
-                                  isDone
-                                    ? "bg-white border-white"
-                                    : "border-stone-300 bg-white"
-                                }`}
-                                aria-label={isDone ? "완료 취소" : "마침"}
-                              >
-                                {isDone ? (
-                                  <svg className="w-6 h-6 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                  </svg>
-                                ) : null}
-                              </button>
+                              <div className="flex items-center gap-3">
+                                {/* 체크 버튼 */}
+                                <button
+                                  type="button"
+                                  onClick={() => void handleToggleHealth(check.id)}
+                                  className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center active:scale-90 transition-all ${
+                                    isDone ? "bg-white border-white" : "border-stone-300 bg-white"
+                                  }`}
+                                  aria-label={isDone ? "완료 취소" : "체크"}
+                                >
+                                  {isDone && (
+                                    <svg className="w-6 h-6 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  )}
+                                </button>
 
-                              {/* 이모지 + 이름 */}
-                              <span className="text-2xl flex-shrink-0">{check.emoji}</span>
-                              <span className={`text-xl font-black flex-1 leading-tight ${isDone ? "text-white" : "text-stone-800"}`}>
-                                {check.title}
-                              </span>
+                                {/* 이모지 + 이름 + 횟수 뱃지 */}
+                                <span className="text-2xl flex-shrink-0">{check.emoji}</span>
+                                <div className="flex-1 min-w-0">
+                                  <span className={`text-xl font-black leading-tight ${isDone ? "text-white" : "text-stone-800"}`}>
+                                    {check.title}
+                                  </span>
+                                  {logCount > 1 && (
+                                    <span className="ml-2 text-sm font-black bg-white/30 text-white px-2 py-0.5 rounded-full">
+                                      오늘 {logCount}회
+                                    </span>
+                                  )}
+                                </div>
 
-                              {/* 시간 + 수정/삭제 버튼 */}
-                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                <span className={`text-base font-bold ${isDone ? "text-emerald-100" : "text-stone-500"}`}>
-                                  {check.routine_time ?? ""}
-                                </span>
-                                <div className="flex gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenCheckEdit(check)}
-                                    className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
-                                      isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
-                                    }`}
-                                  >
-                                    시간
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleDeleteCheck(check.id)}
-                                    className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
-                                      isDone ? "bg-white/20 text-white" : "bg-red-100 text-red-500"
-                                    }`}
-                                  >
-                                    삭제
-                                  </button>
+                                {/* 오른쪽: 시간 + 버튼들 */}
+                                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                  <span className={`text-base font-bold ${isDone ? "text-emerald-100" : "text-stone-500"}`}>
+                                    {check.routine_time ?? ""}
+                                  </span>
+                                  <div className="flex gap-1">
+                                    {/* 추가 체크 버튼 (완료 상태일 때만) */}
+                                    {isDone && (
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleAddHealthLog(check.id)}
+                                        className="text-xs font-black px-2 py-1 rounded-lg bg-white/30 text-white active:scale-95"
+                                        aria-label="한 번 더 체크"
+                                      >
+                                        +1회
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenCheckEdit(check)}
+                                      className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
+                                        isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
+                                      }`}
+                                    >
+                                      시간
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleDeleteCheck(check.id)}
+                                      className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
+                                        isDone ? "bg-white/20 text-white" : "bg-red-100 text-red-500"
+                                      }`}
+                                    >
+                                      삭제
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
+
+                              {/* 오늘 체크 시각 목록 (2회 이상일 때) */}
+                              {logCount > 1 && (
+                                <div className="mt-2 flex flex-wrap gap-1 pl-16">
+                                  {todayLogList.map((log, idx) => (
+                                    <span key={log.id} className="text-xs font-bold bg-white/20 text-white px-2 py-0.5 rounded-full">
+                                      {idx + 1}회{log.logged_at
+                                        ? ` ${new Date(log.logged_at).getHours()}시${String(new Date(log.logged_at).getMinutes()).padStart(2, "0")}분`
+                                        : ""}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -756,6 +982,55 @@ const WelfareCenterCarePage = () => {
                 })}
               </div>
             </section>
+
+            {/* 이달 건강 달력 */}
+            {totalRoutineCount > 0 && (
+              <section className="bg-white rounded-[24px] p-5 shadow-sm">
+                <p className="text-xl font-black text-stone-800 mb-3">
+                  📅 이달 건강 체크 달력
+                </p>
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {["일","월","화","수","목","금","토"].map((d) => (
+                    <p key={d} className="text-xs font-black text-stone-400 pb-1">{d}</p>
+                  ))}
+                  {(() => {
+                    const now = new Date();
+                    const year = now.getFullYear();
+                    const month = now.getMonth();
+                    const firstDow = new Date(year, month, 1).getDay();
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const cells: React.ReactNode[] = [];
+                    for (let i = 0; i < firstDow; i++) cells.push(<div key={`e${i}`} />);
+                    for (let d = 1; d <= daysInMonth; d++) {
+                      const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                      const done = monthlyLogs[key] ?? 0;
+                      const pct  = Math.min(done / totalRoutineCount, 1);
+                      const isToday = key === todayStr;
+                      let bg = "bg-stone-100 text-stone-400";
+                      if (pct >= 1)        bg = "bg-emerald-600 text-white";
+                      else if (pct >= 0.7) bg = "bg-emerald-400 text-white";
+                      else if (pct >= 0.4) bg = "bg-emerald-200 text-emerald-900";
+                      else if (pct > 0)    bg = "bg-emerald-100 text-emerald-700";
+                      cells.push(
+                        <div key={key}
+                          className={`aspect-square rounded-xl flex items-center justify-center text-base font-black ${bg} ${isToday ? "ring-2 ring-amber-400" : ""}`}>
+                          {d}
+                        </div>
+                      );
+                    }
+                    return cells;
+                  })()}
+                </div>
+                <div className="flex gap-3 mt-3 justify-end">
+                  {[["bg-emerald-600","100%"],["bg-emerald-400","70%+"],["bg-emerald-200","40%+"],["bg-emerald-100","1%+"],["bg-stone-100","0%"]].map(([c, l]) => (
+                    <div key={l} className="flex items-center gap-1">
+                      <div className={`w-4 h-4 rounded ${c}`} />
+                      <span className="text-xs text-stone-500">{l}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* 오늘 일정 */}
             <section>
