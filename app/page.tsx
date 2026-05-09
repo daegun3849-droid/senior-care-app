@@ -725,21 +725,25 @@ const WelfareCenterCarePage = () => {
     <div className="min-h-screen bg-stone-100 flex flex-col" style={{ maxWidth: 480, margin: "0 auto" }}>
 
       {/* 헤더 */}
-      <header className="bg-white px-5 pt-7 pb-5 shadow-sm border-b border-stone-100">
-        <div className="flex justify-between items-center">
-          <div>
-            <p className="text-xs font-black tracking-wide text-emerald-800 uppercase">노인복지관 어르신 돌봄</p>
-            <p className="text-lg font-bold text-emerald-900 leading-tight mt-1">{getGreeting()}</p>
-            <p className="text-lg font-bold text-stone-500 leading-tight">{todayYear}</p>
-            <p className="text-3xl font-black text-stone-900 leading-tight mt-0.5">{todayDate}</p>
+      <header className="bg-white px-4 pt-4 pb-3 shadow-sm border-b border-stone-100">
+        <div className="flex justify-between items-center gap-2">
+          {/* 왼쪽: 날짜 + 인사 */}
+          <div className="min-w-0">
+            <p className="text-[10px] font-black tracking-widest text-emerald-700 uppercase">노인복지관 어르신 돌봄</p>
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <p className="text-xl font-black text-stone-900 leading-tight">{todayDate}</p>
+              <p className="text-sm font-bold text-stone-400">{todayYear}</p>
+            </div>
+            <p className="text-sm font-bold text-emerald-700 leading-tight">{getGreeting()}</p>
           </div>
-          <div className="flex flex-col gap-2 items-end ml-3">
+          {/* 오른쪽: 버튼들 */}
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button type="button" onClick={() => setShowFamilyShare(true)}
-              className="bg-amber-50 text-amber-900 border-2 border-amber-300 text-base font-black px-4 py-2.5 rounded-2xl active:scale-95 flex items-center gap-1.5 whitespace-nowrap">
-              <span className="text-xl" aria-hidden>📣</span> 가족·담당자 알림
+              className="bg-amber-400 text-amber-950 text-sm font-black px-3 py-2 rounded-xl active:scale-95 flex items-center gap-1">
+              <span aria-hidden>📣</span> 알림
             </button>
             <button type="button" onClick={() => supabase.auth.signOut().then(() => { window.location.href = "/login"; })}
-              className="bg-stone-100 text-stone-600 text-base font-bold px-4 py-2.5 rounded-2xl active:scale-95 border border-stone-200">
+              className="bg-stone-100 text-stone-500 text-sm font-bold px-3 py-2 rounded-xl active:scale-95 border border-stone-200">
               로그아웃
             </button>
           </div>
@@ -773,37 +777,28 @@ const WelfareCenterCarePage = () => {
             )}
 
             {/* 오늘의 퀴즈 카드 */}
-            <section className="bg-amber-50 rounded-[24px] p-5 shadow-sm border border-amber-200">
-              <div className="flex items-center justify-between mb-3">
+            <section className="bg-amber-50 rounded-2xl p-4 border border-amber-200">
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-bold text-amber-600 uppercase tracking-widest">오늘의 퀴즈</p>
-                  <p className="text-xl font-black text-amber-900">두뇌 자극 한 문제 🧠</p>
+                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">오늘의 퀴즈 🧠</p>
+                  <p className="text-base font-black text-amber-900">두뇌 자극 한 문제</p>
                 </div>
                 {!quiz && (
-                  <button
-                    type="button"
-                    onClick={() => void fetchQuiz()}
-                    disabled={quizLoading}
-                    className="bg-amber-400 text-amber-950 text-lg font-black px-5 py-3 rounded-2xl active:scale-95 disabled:opacity-50"
-                  >
-                    {quizLoading ? "생성 중…" : "퀴즈 시작"}
+                  <button type="button" onClick={() => void fetchQuiz()} disabled={quizLoading}
+                    className="bg-amber-400 text-amber-950 text-sm font-black px-4 py-2 rounded-xl active:scale-95 disabled:opacity-50">
+                    {quizLoading ? "생성 중…" : "시작"}
                   </button>
                 )}
               </div>
-
               {quiz && (
-                <div>
-                  <p className="text-lg font-bold text-amber-700 mb-1">
-                    [{quiz.type}] {quiz.hint}
-                  </p>
-                  <p className="text-2xl font-black text-amber-950 mb-4 leading-snug">
-                    {quiz.question}
-                  </p>
-                  <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="mt-3">
+                  <p className="text-xs font-bold text-amber-600 mb-1">[{quiz.type}] {quiz.hint}</p>
+                  <p className="text-base font-black text-amber-950 mb-3 leading-snug">{quiz.question}</p>
+                  <div className="grid grid-cols-2 gap-2 mb-2">
                     {quiz.choices.map((choice) => {
                       const isSelected = quizSelected === choice;
                       const isCorrect = choice === quiz.answer;
-                      let bg = "bg-white border-2 border-amber-200 text-stone-800";
+                      let bg = "bg-white border border-amber-200 text-stone-700";
                       if (quizAnswered) {
                         if (isCorrect) bg = "bg-emerald-500 border-emerald-500 text-white";
                         else if (isSelected) bg = "bg-red-400 border-red-400 text-white";
@@ -811,42 +806,31 @@ const WelfareCenterCarePage = () => {
                         bg = "bg-amber-300 border-amber-400 text-amber-950";
                       }
                       return (
-                        <button
-                          key={choice}
-                          type="button"
-                          disabled={quizAnswered}
+                        <button key={choice} type="button" disabled={quizAnswered}
                           onClick={() => {
-                            setQuizSelected(choice);
-                            setQuizAnswered(true);
+                            setQuizSelected(choice); setQuizAnswered(true);
                             if (choice === quiz.answer) {
                               confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
                               if ("speechSynthesis" in window) {
-                                const utter = new SpeechSynthesisUtterance("정답입니다! 훌륭해요!");
-                                utter.lang = "ko-KR"; utter.rate = 0.85;
-                                window.speechSynthesis.speak(utter);
+                                const u = new SpeechSynthesisUtterance("정답입니다! 훌륭해요!");
+                                u.lang = "ko-KR"; u.rate = 0.85; window.speechSynthesis.speak(u);
                               }
                             }
                           }}
-                          className={`${bg} text-xl font-black py-4 rounded-2xl active:scale-95 transition-all`}
-                        >
+                          className={`${bg} text-sm font-black py-3 rounded-xl active:scale-95 transition-all`}>
                           {choice}
                         </button>
                       );
                     })}
                   </div>
                   {quizAnswered && (
-                    <div className={`rounded-2xl p-4 ${quizSelected === quiz.answer ? "bg-emerald-100" : "bg-red-50"}`}>
-                      <p className={`text-lg font-black ${quizSelected === quiz.answer ? "text-emerald-800" : "text-red-700"}`}>
+                    <div className={`rounded-xl p-3 ${quizSelected === quiz.answer ? "bg-emerald-100" : "bg-red-50"}`}>
+                      <p className={`text-sm font-black ${quizSelected === quiz.answer ? "text-emerald-800" : "text-red-700"}`}>
                         {quizSelected === quiz.answer ? "🎉 정답이에요!" : `😊 정답은 "${quiz.answer}"이에요`}
                       </p>
-                      <p className="text-base text-stone-600 mt-1">{quiz.explanation}</p>
-                      <button
-                        type="button"
-                        onClick={() => { setQuiz(null); setQuizSelected(null); setQuizAnswered(false); }}
-                        className="mt-3 text-base font-black text-amber-700 underline"
-                      >
-                        다른 문제 풀기
-                      </button>
+                      <p className="text-xs text-stone-500 mt-1">{quiz.explanation}</p>
+                      <button type="button" onClick={() => { setQuiz(null); setQuizSelected(null); setQuizAnswered(false); }}
+                        className="mt-2 text-xs font-black text-amber-700 underline">다른 문제 풀기</button>
                     </div>
                   )}
                 </div>
@@ -854,64 +838,61 @@ const WelfareCenterCarePage = () => {
             </section>
 
             {/* 오늘 건강·복약 체크 */}
-            <section className="bg-white rounded-[28px] p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-2xl font-black text-stone-800">오늘 건강·복약</h2>
+            <section className="bg-white rounded-2xl p-4 shadow-sm">
+              {/* 섹션 헤더 */}
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl font-bold text-emerald-800 bg-emerald-100 px-4 py-1.5 rounded-full">
+                  <h2 className="text-base font-black text-stone-800">오늘 건강·복약</h2>
+                  <span className="text-sm font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
                     {doneCount}/{totalCount}
                   </span>
+                </div>
+                <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => setShowAddCheck(true)}
-                    className="text-xl font-black text-emerald-800 bg-emerald-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95">
+                    className="text-base font-black text-emerald-700 bg-emerald-50 w-8 h-8 rounded-lg flex items-center justify-center active:scale-95 border border-emerald-200">
                     +
                   </button>
                   <button type="button" onClick={() => setShowResetConfirm(true)}
-                    className="text-xl text-slate-400 bg-slate-100 w-10 h-10 rounded-xl flex items-center justify-center active:scale-95">
+                    className="text-base text-stone-400 bg-stone-50 w-8 h-8 rounded-lg flex items-center justify-center active:scale-95 border border-stone-200">
                     ⚙️
                   </button>
                 </div>
               </div>
 
               {/* 진행 바 */}
-              <div className="w-full bg-slate-100 rounded-full h-4 mb-4">
-                <div className="bg-emerald-600 h-4 rounded-full transition-all duration-700"
+              <div className="w-full bg-stone-100 rounded-full h-2 mb-3">
+                <div className="bg-emerald-500 h-2 rounded-full transition-all duration-700"
                   style={{ width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" }} />
               </div>
 
               {doneCount === totalCount && totalCount > 0 && (
-                <div className="text-center mb-4 py-3 bg-emerald-50 rounded-2xl space-y-2">
-                  <p className="text-xl font-black text-emerald-900">오늘 체크를 모두 하셨어요 🎉</p>
+                <div className="flex items-center justify-between mb-2 py-2 px-3 bg-emerald-50 rounded-xl">
+                  <p className="text-sm font-black text-emerald-800">🎉 오늘 체크 완료!</p>
                   <button type="button" onClick={() => setShowFamilyShare(true)}
-                    className="text-lg font-bold text-amber-800 underline underline-offset-2">
-                    가족·담당자에게 알리기
-                  </button>
+                    className="text-xs font-black text-amber-700 underline">가족 알림</button>
                 </div>
               )}
-              {/* 보호자 링크 공유 */}
+
+              {/* 보호자 링크 */}
               {user && (
-                <div className="flex items-center justify-between bg-stone-50 border border-stone-200 rounded-2xl px-4 py-3 mb-2">
-                  <div>
-                    <p className="text-base font-black text-stone-700">보호자 현황 링크</p>
-                    <p className="text-sm text-stone-400">가족·요양보호사가 오늘 현황을 볼 수 있어요</p>
-                  </div>
-                  <button
-                    type="button"
+                <div className="flex items-center justify-between bg-stone-50 border border-stone-100 rounded-xl px-3 py-2 mb-3">
+                  <p className="text-xs font-bold text-stone-500">보호자·가족 현황 링크</p>
+                  <button type="button"
                     onClick={() => {
                       const url = `${window.location.origin}/caregiver/${user.id}`;
                       if (navigator.clipboard) {
                         void navigator.clipboard.writeText(url);
-                        alert("링크가 복사되었어요!\n가족·요양보호사에게 보내주세요.");
+                        alert("링크 복사 완료!\n가족·요양보호사에게 보내주세요.");
                       }
                     }}
-                    className="bg-emerald-800 text-white text-base font-black px-4 py-2.5 rounded-xl active:scale-95"
-                  >
+                    className="bg-emerald-700 text-white text-xs font-black px-3 py-1.5 rounded-lg active:scale-95">
                     링크 복사
                   </button>
                 </div>
               )}
 
               {/* 카테고리별 리스트 */}
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {CATEGORY_RANGES.map((cat) => {
                   const items = healthChecks.filter(
                     (c) => c.sort_order >= cat.from && c.sort_order <= cat.to,
@@ -919,8 +900,8 @@ const WelfareCenterCarePage = () => {
                   if (items.length === 0) return null;
                   return (
                     <div key={cat.label}>
-                      <p className="text-base font-black text-stone-500 mb-2 px-1">{cat.label}</p>
-                      <div className="space-y-2">
+                      <p className="text-xs font-black text-stone-400 mb-1.5 px-1">{cat.label}</p>
+                      <div className="space-y-1.5">
                         {items.map((check) => {
                           const todayLogList = healthLogs.filter(
                             (l) => l.routine_id === check.id && l.done_date === todayStr,
@@ -930,84 +911,73 @@ const WelfareCenterCarePage = () => {
                           return (
                             <div
                               key={check.id}
-                              className={`rounded-2xl px-4 py-3 transition-all ${
-                                isDone ? "bg-emerald-700" : "bg-stone-50 border border-stone-200"
+                              className={`rounded-xl px-3 py-2 transition-all ${
+                                isDone ? "bg-emerald-600" : "bg-stone-50 border border-stone-100"
                               }`}
                             >
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2">
                                 {/* 체크 버튼 */}
                                 <button
                                   type="button"
                                   onClick={() => void handleToggleHealth(check.id)}
-                                  className={`w-12 h-12 rounded-full border-4 flex-shrink-0 flex items-center justify-center active:scale-90 transition-all ${
+                                  className={`w-9 h-9 rounded-full border-2 flex-shrink-0 flex items-center justify-center active:scale-90 transition-all ${
                                     isDone ? "bg-white border-white" : "border-stone-300 bg-white"
                                   }`}
                                   aria-label={isDone ? "완료 취소" : "체크"}
                                 >
                                   {isDone && (
-                                    <svg className="w-6 h-6 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                    <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                     </svg>
                                   )}
                                 </button>
 
                                 {/* 이모지 + 이름 + 횟수 뱃지 */}
-                                <span className="text-2xl flex-shrink-0">{check.emoji}</span>
+                                <span className="text-lg flex-shrink-0">{check.emoji}</span>
                                 <div className="flex-1 min-w-0">
-                                  <span className={`text-xl font-black leading-tight ${isDone ? "text-white" : "text-stone-800"}`}>
-                                    {check.title}
-                                  </span>
-                                  {logCount > 1 && (
-                                    <span className="ml-2 text-sm font-black bg-white/30 text-white px-2 py-0.5 rounded-full">
-                                      오늘 {logCount}회
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span className={`text-sm font-black leading-tight ${isDone ? "text-white" : "text-stone-800"}`}>
+                                      {check.title}
                                     </span>
-                                  )}
-                                </div>
-
-                                {/* 오른쪽: 시간 + 버튼들 */}
-                                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                  <span className={`text-base font-bold ${isDone ? "text-emerald-100" : "text-stone-500"}`}>
+                                    {logCount > 1 && (
+                                      <span className="text-[10px] font-black bg-white/30 text-white px-1.5 py-0.5 rounded-full">
+                                        {logCount}회
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className={`text-[11px] font-bold ${isDone ? "text-emerald-100" : "text-stone-400"}`}>
                                     {check.routine_time ?? ""}
                                   </span>
-                                  <div className="flex gap-1">
-                                    {/* 추가 체크 버튼 (완료 상태일 때만) */}
-                                    {isDone && (
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleAddHealthLog(check.id)}
-                                        className="text-xs font-black px-2 py-1 rounded-lg bg-white/30 text-white active:scale-95"
-                                        aria-label="한 번 더 체크"
-                                      >
-                                        +1회
-                                      </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenCheckEdit(check)}
-                                      className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
-                                        isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-600"
-                                      }`}
-                                    >
-                                      시간
+                                </div>
+
+                                {/* 오른쪽: 버튼들 */}
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  {isDone && (
+                                    <button type="button" onClick={() => void handleAddHealthLog(check.id)}
+                                      className="text-[10px] font-black px-1.5 py-1 rounded-md bg-white/30 text-white active:scale-95">
+                                      +1회
                                     </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleDeleteCheck(check.id)}
-                                      className={`text-xs font-black px-2 py-1 rounded-lg active:scale-95 ${
-                                        isDone ? "bg-white/20 text-white" : "bg-red-100 text-red-500"
-                                      }`}
-                                    >
-                                      삭제
-                                    </button>
-                                  </div>
+                                  )}
+                                  <button type="button" onClick={() => handleOpenCheckEdit(check)}
+                                    className={`text-[10px] font-black px-1.5 py-1 rounded-md active:scale-95 ${
+                                      isDone ? "bg-white/20 text-white" : "bg-stone-200 text-stone-500"
+                                    }`}>
+                                    시간
+                                  </button>
+                                  <button type="button" onClick={() => void handleDeleteCheck(check.id)}
+                                    className={`text-[10px] font-black px-1.5 py-1 rounded-md active:scale-95 ${
+                                      isDone ? "bg-white/20 text-white" : "bg-red-50 text-red-400"
+                                    }`}>
+                                    삭제
+                                  </button>
                                 </div>
                               </div>
 
                               {/* 오늘 체크 시각 목록 (2회 이상일 때) */}
                               {logCount > 1 && (
-                                <div className="mt-2 flex flex-wrap gap-1 pl-16">
+                                <div className="mt-1.5 flex flex-wrap gap-1 pl-12">
                                   {todayLogList.map((log, idx) => (
-                                    <span key={log.id} className="text-xs font-bold bg-white/20 text-white px-2 py-0.5 rounded-full">
+                                    <span key={log.id} className="text-[10px] font-bold bg-white/20 text-white px-1.5 py-0.5 rounded-full">
                                       {idx + 1}회{log.logged_at
                                         ? ` ${new Date(log.logged_at).getHours()}시${String(new Date(log.logged_at).getMinutes()).padStart(2, "0")}분`
                                         : ""}
@@ -1029,7 +999,7 @@ const WelfareCenterCarePage = () => {
             {totalRoutineCount > 0 && (
               <section className="bg-white rounded-[24px] p-5 shadow-sm">
                 <p className="text-xl font-black text-stone-800 mb-3">
-                  📅 이달 건강 체크 달력
+                  📅 이달 건강 달력
                 </p>
                 <div className="grid grid-cols-7 gap-1 text-center">
                   {["일","월","화","수","목","금","토"].map((d) => (
@@ -1085,7 +1055,7 @@ const WelfareCenterCarePage = () => {
 
             {/* 오늘 일정 */}
             <section>
-              <h2 className="text-2xl font-black text-stone-800 mb-3 px-1">오늘 복지관·병원 일정</h2>
+              <h2 className="text-base font-black text-stone-800 mb-2 px-1">📋 오늘 복지관·병원 일정</h2>
               {todaySchedules.length === 0 ? (
                 <div className="bg-white rounded-[24px] p-8 text-center shadow-sm">
                   <p className="text-5xl mb-3">📅</p>
