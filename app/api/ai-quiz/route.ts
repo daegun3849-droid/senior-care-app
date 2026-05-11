@@ -12,16 +12,18 @@ const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 export const GET = async (req: NextRequest) => {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get("date") ?? new Date().toISOString().slice(0, 10);
+  const variantSeed = searchParams.get("r") ?? "";
 
   const prompt = `
 오늘 날짜: ${date}
+문제 무작위 시드(반복 방지용): ${variantSeed || "(시드 없음)"}
 당신은 노인복지관 어르신(70대 이상) 대상 인지 자극 퀴즈 출제 전문가입니다.
 
-아래 JSON 형식으로 퀴즈 1문제를 만드세요.
-- 유형: 속담 빈칸 채우기, 사자성어 뜻 맞추기, 계절 상식, 옛 노래 가사 중 하나
-- 난이도: 쉬움 (보기를 보면 바로 알 수 있는 수준)
-- 보기: 4개 (정답 1개 포함)
-- 반드시 JSON만 출력하고 설명 문장 없이 출력
+아래 JSON 형식으로 퀴즈 **딱 1문제**만 만드세요.
+- 유형은 매번 하나만 골라 다양하게 쓸 것 (속담 빈칸 / 사자성어 / 계절·생활 상식 / 옛 노래 가사).
+- 같은 날이라도 시드 코드가 바뀌면 **속담도 문제도 보기 정담도 전부 새로** 작성할 것 (이미 자주 나온 "가는 말이 고와야…" 속담만 반복 금지).
+- 난이도: 쉬움. 보기 4개 중 정답 1개.
+- 반드시 JSON만 출력 (설명 문장 금지)
 
 {
   "type": "속담|사자성어|상식|노래",

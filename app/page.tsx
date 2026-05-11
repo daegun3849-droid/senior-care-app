@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { getKoreaMonthRange, koreaYmd, koreaYmdFromIso } from "@/lib/korea-date";
 import confetti from "canvas-confetti";
 
 interface Schedule {
@@ -210,7 +211,8 @@ const WelfareCenterCarePage = () => {
   const [newCheckTime, setNewCheckTime] = useState("09:00");
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  /** 한국 날짜 기준 오늘 (UTC 오프셋으로 하루 밀림 방지) */
+  const todayStr = koreaYmd();
   const { date: todayDate, year: todayYear } = getDateParts();
 
   // 로컬 스토리지에서 연락처 로드
@@ -228,7 +230,19 @@ const WelfareCenterCarePage = () => {
         .select("*")
         .eq("user_id", userId)
         .order("start_time", { ascending: true });
-      if (data) setSchedules(data as Schedule[]);
+      if (data) {
+        type Row = Schedule & { content?: string | null };
+        setSchedules(
+          (data as Row[]).map((row) => ({
+            ...row,
+            title: (row.title && String(row.title).trim())
+              ? String(row.title)
+              : (row.content != null && String(row.content).trim())
+                ? String(row.content).trim()
+                : "일정",
+          })),
+        );
+      }
     } catch (e) {
       console.error("일정 조회 실패:", e);
     }
@@ -315,9 +329,7 @@ const WelfareCenterCarePage = () => {
   }, [user, insertDefaultHealthChecks]);
 
   const fetchMonthlyLogs = useCallback(async (userId: string) => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-    const lastDay  = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const { first: firstDay, last: lastDay } = getKoreaMonthRange(new Date());
     const [{ data: logs }, { data: routines }] = await Promise.all([
       supabase.from("routine_logs").select("done_date")
         .eq("user_id", userId).gte("done_date", firstDay).lte("done_date", lastDay),
@@ -425,7 +437,8 @@ const WelfareCenterCarePage = () => {
     try {
       await supabase.from("todos").insert({
         user_id: user.id,
-        content: calendarTitle.trim(),
+        title: calendarTitle.trim(),
+        description: "",
         start_time: start,
         end_time: end,
         is_completed: false,
@@ -437,19 +450,22 @@ const WelfareCenterCarePage = () => {
       setCalendarEndTime("10:00");
     } catch (e) {
       console.error("달력 일정 저장 실패:", e);
+      alert("일정 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
   };
 
-  const fetchQuiz = useCallback(async () => {
-    // 오늘 이미 불러왔으면 재요청 안 함
+  const fetchQuiz = useCallback(async (options?: { forceNew?: boolean }) => {
     const cacheKey = `quiz-${todayStr}`;
     try {
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) { setQuiz(JSON.parse(cached) as DailyQuiz); return; }
+      if (!options?.forceNew) {
+        const cached = sessionStorage.getItem(cacheKey);
+        if (cached) { setQuiz(JSON.parse(cached) as DailyQuiz); return; }
+      } else sessionStorage.removeItem(cacheKey);
     } catch { /* 무시 */ }
     setQuizLoading(true);
     try {
-      const res = await fetch(`/api/ai-quiz?date=${todayStr}`);
+      const bust = options?.forceNew ? `&r=${Date.now()}` : "";
+      const res = await fetch(`/api/ai-quiz?date=${todayStr}${bust}`);
       const { quiz: q } = await res.json() as { quiz: DailyQuiz };
       setQuiz(q);
       try { sessionStorage.setItem(cacheKey, JSON.stringify(q)); } catch { /* 무시 */ }
@@ -554,7 +570,7 @@ const WelfareCenterCarePage = () => {
     const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
     const total = healthChecks.length;
     const todayScheduleList = schedules
-      .filter((s) => new Date(s.start_time).toISOString().slice(0, 10) === todayStr)
+      .filter((s) => koreaYmdFromIso(s.start_time) === todayStr)
       .map((s) => `• ${s.title}`)
       .join("\n");
     return (
@@ -697,7 +713,6 @@ const WelfareCenterCarePage = () => {
       setActiveTab("schedule");
     } catch (e) {
       console.error("일정 저장 실패:", e);
-      alert("저장에 실패했습니다. 로그인 상태를 확인해 주세요.");
       alert(`저장에 실패했습니다.\n${e instanceof Error ? e.message : "다시 시도해 주세요."}`);
     } finally {
       setIsSaving(false);
@@ -705,7 +720,7 @@ const WelfareCenterCarePage = () => {
   };
 
   const todaySchedules = schedules.filter(
-    (s) => new Date(s.start_time).toISOString().slice(0, 10) === todayStr
+    (s) => koreaYmdFromIso(s.start_time) === todayStr,
   );
   const doneCount = healthLogs.filter((l) => l.done_date === todayStr).length;
   const totalCount = healthChecks.length;
@@ -850,8 +865,13 @@ const WelfareCenterCarePage = () => {
                         {quizSelected === quiz.answer ? "🎉 정답이에요!" : `😊 정답은 "${quiz.answer}"이에요`}
                       </p>
                       <p className="text-xs text-stone-500 mt-1">{quiz.explanation}</p>
-                      <button type="button" onClick={() => { setQuiz(null); setQuizSelected(null); setQuizAnswered(false); }}
-                        className="mt-2 text-xs font-black text-amber-700 underline">다른 문제 풀기</button>
+                      <button type="button" onClick={() => {
+                        try { sessionStorage.removeItem(`quiz-${todayStr}`); } catch { /* empty */ }
+                        setQuizSelected(null);
+                        setQuizAnswered(false);
+                        void fetchQuiz({ forceNew: true });
+                      }}
+                        className="mt-2 text-xs font-black text-amber-700 underline">새 문제 받기</button>
                     </div>
                   )}
                 </div>
@@ -1027,15 +1047,15 @@ const WelfareCenterCarePage = () => {
                     <p key={d} className="text-xs font-black text-stone-400 pb-1">{d}</p>
                   ))}
                   {(() => {
-                    const now = new Date();
-                    const year = now.getFullYear();
-                    const month = now.getMonth();
-                    const firstDow = new Date(year, month, 1).getDay();
-                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    const parts = todayStr.split("-").map(Number);
+                    const year = parts[0]!;
+                    const monthJs = parts[1]! - 1;
+                    const firstDow = new Date(year, monthJs, 1).getDay();
+                    const daysInMonth = new Date(year, monthJs + 1, 0).getDate();
                     const cells: React.ReactNode[] = [];
                     for (let i = 0; i < firstDow; i++) cells.push(<div key={`e${i}`} />);
                     for (let d = 1; d <= daysInMonth; d++) {
-                      const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                      const key = `${year}-${String(monthJs + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                       const done = monthlyLogs[key] ?? 0;
                       const pct  = Math.min(done / totalRoutineCount, 1);
                       const isToday = key === todayStr;

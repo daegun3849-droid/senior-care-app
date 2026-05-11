@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import webpush from "web-push";
 import { createClient } from "@/lib/supabase/server";
+import { koreaYmd } from "@/lib/korea-date";
 
 /**
  * Vercel Cron Job — 매 30분 실행
@@ -42,7 +43,7 @@ export const GET = async (req: NextRequest) => {
     const now = new Date();
     const kstNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
     const in30min = new Date(now.getTime() + 30 * 60 * 1000);
-    const todayStr = kstNow.toISOString().slice(0, 10);
+    const todayStr = koreaYmd();
     const kstHour = kstNow.getHours();
     const kstMinute = kstNow.getMinutes();
     // 현재 KST 기준 HH:MM (30분 전 기준)

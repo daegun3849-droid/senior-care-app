@@ -7,10 +7,11 @@
 
 import { useState, useEffect, use } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { koreaYmd, koreaYmdFromIso } from "@/lib/korea-date";
 
 interface HealthCheck { id: string; title: string; emoji: string; sort_order: number; routine_time: string | null; }
 interface HealthLog   { routine_id: string; done_date: string; logged_at: string | null; }
-interface Schedule    { id: string; content: string; start_time: string; end_time: string; is_completed: boolean; }
+interface Schedule    { id: string; title: string; start_time: string; end_time: string; is_completed: boolean; }
 
 const CATEGORY_RANGES = [
   { label: "💊 복약",     from:  0, to:  2 },
@@ -24,7 +25,7 @@ const CATEGORY_RANGES = [
 
 const CaregiverPage = ({ params }: { params: Promise<{ userId: string }> }) => {
   const { userId } = use(params);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = koreaYmd();
 
   const [checks, setChecks]     = useState<HealthCheck[]>([]);
   const [logs, setLogs]         = useState<HealthLog[]>([]);
@@ -40,17 +41,27 @@ const CaregiverPage = ({ params }: { params: Promise<{ userId: string }> }) => {
     if (!userId) return;
     const load = async () => {
       try {
-        const [{ data: r }, { data: l }, { data: s }] = await Promise.all([
+        const [{ data: r }, { data: l }, { data: todos }] = await Promise.all([
           supabase.from("routines").select("*").eq("user_id", userId).order("sort_order"),
           supabase.from("routine_logs").select("routine_id, done_date, logged_at")
             .eq("user_id", userId).eq("done_date", todayStr),
-          supabase.from("todos").select("id, content, start_time, end_time, is_completed")
-            .eq("user_id", userId).gte("start_time", `${todayStr}T00:00:00`).lte("start_time", `${todayStr}T23:59:59`)
-            .order("start_time"),
+          supabase.from("todos").select("*").eq("user_id", userId).order("start_time"),
         ]);
         setChecks((r ?? []) as HealthCheck[]);
         setLogs((l ?? []) as HealthLog[]);
-        setSchedules((s ?? []) as Schedule[]);
+        type Row = Schedule & { content?: string | null };
+        const mapped: Schedule[] = (todos ?? [])
+          .map((raw) => {
+            const row = raw as Row;
+            const title = (row.title && String(row.title).trim())
+              ? String(row.title)
+              : (row.content != null && String(row.content).trim())
+                ? String(row.content).trim()
+                : "일정";
+            return { ...row, title };
+          })
+          .filter((row) => koreaYmdFromIso(row.start_time) === todayStr);
+        setSchedules(mapped);
       } catch {
         setError("정보를 불러올 수 없습니다. 링크를 다시 확인해 주세요.");
       } finally {
@@ -179,7 +190,7 @@ const CaregiverPage = ({ params }: { params: Promise<{ userId: string }> }) => {
                   <span className="text-xl">{s.is_completed ? "✅" : "📋"}</span>
                   <div className="flex-1">
                     <p className={`text-lg font-black ${s.is_completed ? "text-stone-400 line-through" : "text-stone-800"}`}>
-                      {s.content}
+                      {s.title}
                     </p>
                     <p className="text-sm text-stone-400">
                       {new Date(s.start_time).toLocaleTimeString("ko-KR", {
